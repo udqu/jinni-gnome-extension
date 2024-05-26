@@ -6,3 +6,7 @@
     * add settings for the task list window width
 0.0.3
     * implementation for dynamical response to settings changes without enable/disable
+0.0.4
+    * remove unnecessary style fields
+    * remove button increase/decrease logic
+    * add task item list and enter text box

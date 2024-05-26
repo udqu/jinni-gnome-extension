@@ -1,10 +1,23 @@
-.popup-menu-item {
-    padding: 10px;
-}
-
 .counter-indicator {
     border-radius: 5px;
 }
 
 .counter-label {
+}
+
+.counter-container {
+    padding: 10px;
+}
+
+.counter-entry {
+    padding: 5px;
+}
+
+.counter-list {
+    margin-top: 10px;
+}
+
+.counter-list-item {
+    padding: 5px;
+    border-bottom: 1px solid #ccc;
 }

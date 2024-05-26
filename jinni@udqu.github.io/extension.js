@@ -12,6 +12,8 @@ class CounterExtension {
         this._indicator = null;
         this._settings = null;
         this._widthChangedHandler = null;
+        this._entry = null;
+        this._listBox = null;
     }
 
     enable() {
@@ -38,23 +40,29 @@ class CounterExtension {
         // Add the label to the indicator
         this._indicator.add_child(this._label);
 
-        // Create increase button
-        let increaseButton = new PopupMenu.PopupMenuItem('Increase');
-        increaseButton.connect('activate', () => {
-            counter++;
-            this._label.set_text(`${counter}`);
+        // Create the text box (entry)
+        this._entry = new St.Entry({
+            can_focus: true,
+            hint_text: "Type your task here and hit enter",
+            style_class: 'counter-entry'
         });
 
-        // Create decrease button
-        let decreaseButton = new PopupMenu.PopupMenuItem('Decrease');
-        decreaseButton.connect('activate', () => {
-            counter--;
-            this._label.set_text(`${counter}`);
+        // Connect the key press event
+        this._entry.clutter_text.connect('activate', this._onTextEntered.bind(this));
+
+        // Create a box to hold the list of recorded texts
+        this._listBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'counter-list'
         });
 
-        // Add buttons to the indicator's menu
-        this._indicator.menu.addMenuItem(increaseButton);
-        this._indicator.menu.addMenuItem(decreaseButton);
+        // Create a container for the text box and list inside a PopupMenu.PopupMenuSection
+        let container = new PopupMenu.PopupMenuSection();
+        container.actor.add_child(this._entry);
+        container.actor.add_child(this._listBox);
+
+        // Add the container to the indicator's menu
+        this._indicator.menu.addMenuItem(container);
 
         // Add the indicator to the status area (panel)
         Main.panel.addToStatusArea('counter-indicator', this._indicator);
@@ -91,6 +99,27 @@ class CounterExtension {
             themeContext.get_theme().load_stylesheet(stylesheet);
         } catch (error) {
             log(`Failed to load stylesheet: ${error.message}`);
+        }
+    }
+
+    _onTextEntered() {
+        let text = this._entry.get_text().trim();
+        if (text !== "") {
+            // Create a label for the entered text and add to the list
+            let textLabel = new St.Label({
+                text: text,
+                y_align: Clutter.ActorAlign.CENTER,
+                style_class: 'counter-list-item'
+            });
+
+            this._listBox.add(textLabel);
+
+            // Clear the entry text
+            this._entry.set_text("");
+
+            // Increment the counter and update the label
+            counter++;
+            this._label.set_text(`${counter}`);
         }
     }
 }
