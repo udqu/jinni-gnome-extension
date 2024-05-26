@@ -1,0 +1,8 @@
+0.0.1
+    * setup the main files for the app
+    * fill in the simple counter logic for the button in the top bar
+    * add stylesheet for counter indicator and its text label
+0.0.2
+    * add settings for the task list window width
+0.0.3
+    * implementation for dynamical response to settings changes without enable/disable

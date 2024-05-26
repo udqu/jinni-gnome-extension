@@ -1,0 +1,11 @@
+{
+    "uuid": "jinni@udqu.github.io",
+    "name": "Jinni (For GNOME)",
+    "description": "A quick access task manager app in the GNOME Shell Top Bar",
+    "version": 1,
+    "shell-version": ["3.36", "3.38", "40", "41", "42", "43"],
+    "settings-schema": "org.gnome.shell.extensions.jinni",
+    "settings": "prefs.js",
+    "url": "https://github.com/udqu/jinni-gnome-extension"
+  }
+  
