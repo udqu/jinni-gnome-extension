@@ -70,6 +70,9 @@ class CounterExtension {
         // Connect to the settings change signal
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
         this._updateWidth();  // Initialize with current value
+
+        // Connect the button press event to focus on the text entry box
+        this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
     }
 
     disable() {
@@ -99,6 +102,14 @@ class CounterExtension {
             themeContext.get_theme().load_stylesheet(stylesheet);
         } catch (error) {
             log(`Failed to load stylesheet: ${error.message}`);
+        }
+    }
+
+    _onIndicatorClicked(actor, event) {
+        // Check if the click event is a left-click (button 1)
+        if (event.get_button() === Clutter.BUTTON_PRIMARY) {
+            // Focus on the text entry box
+            this._entry.grab_key_focus();
         }
     }
 

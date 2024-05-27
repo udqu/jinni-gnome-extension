@@ -10,3 +10,5 @@
     * remove unnecessary style fields
     * remove button increase/decrease logic
     * add task item list and enter text box
+0.0.5
+    * put the cursor into the text entry box automatically after a click on the counter
