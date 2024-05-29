@@ -14,3 +14,7 @@
     * put the cursor into the text entry box automatically after a click on the counter
 0.0.6
     * implement task addition and editting features
+0.0.7
+    * switch from button release to button press triggers in task edit method
+    * add task completed/delete button
+    * make the delete button appear only when mouse hovers over the task

@@ -18,7 +18,7 @@ class CounterExtension {
         this._counter = 0;
         // current edit variables
         this._currentEntry = null;
-        this._currentLabel = null;
+        this._currentTask = null;
         this._currentIndex = null;
         this._entryFocusOutHandlerId = null;
     }
@@ -53,6 +53,9 @@ class CounterExtension {
             hint_text: "Type your task here and hit enter",
             style_class: 'counter-entry'
         });
+
+        // Connect the button press event to focus on the text entry box
+        this._entry.clutter_text.connect('button_press_event', this._onEntryClicked.bind(this));
 
         // Connect the key press event
         this._entry.clutter_text.connect('activate', this._onTextEntered.bind(this));
@@ -124,14 +127,31 @@ class CounterExtension {
         }
     }
 
+    _onEntryClicked(actor, event) {
+        // Check if the click event is a left-click (button 1)
+        if (event.get_button() === Clutter.BUTTON_PRIMARY) {
+            // Check if there's already an entry being edited
+            if (this._currentEntry) {
+                this._saveCurrentEntry();
+            }
+
+            // Focus on the text entry box
+            this._entry.grab_key_focus();
+        }
+    }
+
     _onTextEntered() {
         let text = this._entry.get_text().trim();
         if (text !== "") {
+            // Create a container for the task label and delete button
+            let taskContainer = new St.BoxLayout({ vertical: false, style_class: 'task-container' });
+
             // Create a label for the entered text and add to the list
             let textLabel = new St.Label({
                 text: text,
                 y_align: Clutter.ActorAlign.CENTER,
-                style_class: 'counter-list-item'
+                style_class: 'counter-list-item',
+                x_expand: true  // Make the label expand to fill the available space
             });
 
             // Make the label reactive to clicks
@@ -139,8 +159,8 @@ class CounterExtension {
 
             let clickCount = 0; // Track click count
 
-            // Connect button-release-event to handle single and double clicks
-            textLabel.connect('button-release-event', (actor, event) => {
+            // Connect button_press_event to handle single and double clicks
+            textLabel.connect('button_press_event', (actor, event) => {
                 if (event.get_button() === Clutter.BUTTON_PRIMARY) {
                     clickCount++;
 
@@ -154,7 +174,7 @@ class CounterExtension {
 
                     // Handle double-click
                     if (clickCount === 2) {
-                        this._editTask(textLabel);
+                        this._editTask(taskContainer);
                     }
 
                     // Reset click count after a timeout
@@ -165,7 +185,48 @@ class CounterExtension {
                 }
             });
 
-            this._listBox.add_child(textLabel);
+            // Create a delete button
+            let deleteButton = new St.Button({
+                label: '✔ | ✖',
+                style_class: 'delete-button',
+                visible: false  // Set initial visibility to false
+            });
+
+            // Function to check if the mouse is within the boundaries of an actor
+            function isMouseWithinActor(actor, event) {
+                let [x, y] = event.get_coords();
+                let [x1, y1] = actor.get_transformed_position();
+                let [width, height] = actor.get_transformed_size();
+                return x >= x1 && x <= x1 + width && y >= y1 && y <= y1 + height;
+            }
+
+            // Connect enter-event for textLabel to show delete button
+            textLabel.connect('enter-event', () => {
+                deleteButton.visible = true;
+            });
+
+            // Connect leave-event for textLabel to schedule hiding of delete button
+            textLabel.connect('leave-event', (_, event) => {
+                if (!isMouseWithinActor(deleteButton, event)) {
+                    deleteButton.visible = false;
+                }
+            });
+
+            deleteButton.connect('leave-event', (_, event) => {
+                deleteButton.visible = false;
+            });
+
+            // Connect delete button click event
+            deleteButton.connect('clicked', () => {
+                this._deleteTask(taskContainer);
+            });
+
+            // Add label and delete button to the task container
+            taskContainer.add_child(textLabel);
+            taskContainer.add_child(deleteButton);
+
+            // Add the task container to the list
+            this._listBox.add_child(taskContainer);
 
             // Clear the entry text
             this._entry.set_text("");
@@ -176,14 +237,15 @@ class CounterExtension {
         }
     }
 
-    _editTask(label) {
+    _editTask(taskContainer) {
         // Check if there's already an entry being edited
         if (this._currentEntry) {
             this._saveCurrentEntry();
         }
 
         // Get the index of the current label
-        let index = this._listBox.get_children().indexOf(label);
+        let index = this._listBox.get_children().indexOf(taskContainer);
+        let label = taskContainer.get_child_at_index(0);
 
         // On double-click, replace the label with an entry
         let entry = new St.Entry({
@@ -193,12 +255,12 @@ class CounterExtension {
         });
 
         // Replace label with entry
-        this._listBox.remove_child(label);
+        this._listBox.remove_child(taskContainer);
         this._listBox.insert_child_at_index(entry, index);
 
         // Store the current entry and corresponding label
         this._currentEntry = entry;
-        this._currentLabel = label;
+        this._currentTask  = taskContainer;
         this._currentIndex = index;
 
         // Connect activation event to save changes
@@ -212,6 +274,15 @@ class CounterExtension {
         // Focus entry
         entry.grab_key_focus();
         entry.clutter_text.set_selection(0, -1);
+    }
+
+    _deleteTask(taskContainer) {
+        // Remove the task item from the list
+        this._listBox.remove_child(taskContainer);
+
+        // Decrement the counter and update the label
+        this._counter--;
+        this._label.set_text(`${this._counter}`);
     }
 
     _handleFocusLoss(actor, event) {
@@ -229,12 +300,12 @@ class CounterExtension {
         let newText = this._currentEntry.get_text().trim();
         if (newText !== "") {
             // Update label text with new text
-            this._currentLabel.set_text(newText);
+            this._currentTask.get_child_at_index(0).set_text(newText);
         }
 
         // Remove entry and add label back to the list at the same index
         this._listBox.remove_child(this._currentEntry);
-        this._listBox.insert_child_at_index(this._currentLabel, this._currentIndex);
+        this._listBox.insert_child_at_index(this._currentTask, this._currentIndex);
 
         // Disconnect the event listener for focus loss
         if (this._entryFocusOutHandlerId) {
@@ -244,7 +315,7 @@ class CounterExtension {
 
         // Clear the current entry and label references
         this._currentEntry = null;
-        this._currentLabel = null;
+        this._currentTask  = null;
         this._currentIndex = null;
     }
 }
