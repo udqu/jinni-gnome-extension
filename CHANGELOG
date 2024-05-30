@@ -18,3 +18,7 @@
     * switch from button release to button press triggers in task edit method
     * add task completed/delete button
     * make the delete button appear only when mouse hovers over the task
+0.0.8
+    * introduce more abstraction for task container and organize the code accordingly
+    * add error handling for settings
+    * add editing-entry style to highlight the current task entry being edited
