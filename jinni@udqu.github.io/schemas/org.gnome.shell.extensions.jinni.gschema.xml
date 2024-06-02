@@ -4,7 +4,12 @@
         <key name="tasklist-window-width" type="i">
             <default>300</default>
             <summary>Task List Window Width</summary>
-            <description>Width of the task list window in pixels.</description>
+            <description>Sets the width of the task list window in pixels.</description>
+        </key>
+        <key name="persist-tasks" type="b">
+            <default>true</default>
+            <summary>Persist tasks across sessions</summary>
+            <description>Whether to save and load tasks across GNOME Shell sessions.</description>
         </key>
     </schema>
 </schemalist>

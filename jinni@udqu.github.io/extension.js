@@ -3,9 +3,11 @@ const Main = imports.ui.main;
 const PanelMenu = imports.ui.panelMenu;
 const PopupMenu = imports.ui.popupMenu;
 const ExtensionUtils = imports.misc.extensionUtils;
+const ByteArray = imports.byteArray;
 
 // Define self for this extension
 const self = ExtensionUtils.getCurrentExtension();
+const TasksFilePath = `${GLib.get_home_dir()}/.local/share/gnome-shell/extensions/${self.metadata.uuid}/savedTasks.json`;
 
 // TaskContainer class to handle task items
 class TaskContainer {
@@ -184,6 +186,9 @@ class CounterExtension {
 
         // Connect the button press event to focus on the text entry box
         this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
+
+        // Load tasks from the file
+        this._loadTasks();
     }
 
     disable() {
@@ -260,6 +265,9 @@ class CounterExtension {
             // Increment the counter and update the label
             this._counter++;
             this._label.set_text(`${this._counter}`);
+
+            // Save tasks to persistent storage
+            this._saveTasks();
         }
     }
 
@@ -323,6 +331,9 @@ class CounterExtension {
         // Decrement the counter and update the label
         this._counter--;
         this._label.set_text(`${this._counter}`);
+
+        // Save tasks to persistent storage
+        this._saveTasks();
     }
 
     _handleFocusLoss(actor, event) {
@@ -360,6 +371,75 @@ class CounterExtension {
         this._currentEntry = null;
         this._currentTask  = null;
         this._currentIndex = null;
+
+        // Save tasks to persistent storage
+        this._saveTasks();
+    }
+
+    _saveTasks() {
+        // Check if the persist-tasks setting is enabled
+        if (!this._settings.get_boolean('persist-tasks')) {
+            return;
+        }
+
+        // Get the task lists
+        let tasks = this._listBox.get_children().map(child => {
+            if (child instanceof St.BoxLayout) {
+                // get the text of the label of task container
+                let text = child.get_child_at_index(0).get_text();
+                return text;
+            }
+            return '';
+        }).filter(text => text !== '');
+
+        // Attempt to save the texts for tasks, log error message if it fails
+        try {
+            let file = Gio.file_new_for_path(TasksFilePath);
+            let [success, tag] = file.replace_contents(
+                JSON.stringify(tasks),
+                null,  // etag
+                false, // make_backup
+                Gio.FileCreateFlags.NONE,
+                null   // cancellable
+            );
+        } catch (error) {
+            log(`Failed to save tasks to file: ${error.message}`);
+        }
+    }
+
+    _loadTasks() {
+        // Check if the persist-tasks setting is enabled
+        if (!this._settings.get_boolean('persist-tasks')) {
+            this._clearTasksFile();
+            return;
+        }
+
+        try {
+            let [success, contents] = GLib.file_get_contents(TasksFilePath);
+            if (success) {
+                let contentsString = ByteArray.toString(contents);
+                let tasks = JSON.parse(contentsString);
+                tasks.forEach(taskText => {
+                    let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this));
+                    this._listBox.add_child(task.getContainer());
+                });
+                this._counter = tasks.length;
+                this._label.set_text(`${this._counter}`);
+            }
+        } catch (error) {
+            log(`Failed to load tasks from file: ${error.message}`);
+        }
+    }
+
+    _clearTasksFile() {
+        try {
+            let file = Gio.file_new_for_path(TasksFilePath);
+            if (file.query_exists(null)) {
+                file.delete(null);
+            }
+        } catch (error) {
+            log(`Failed to clear tasks file: ${error.message}`);
+        }
     }
 }
 
