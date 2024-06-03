@@ -42,3 +42,16 @@
     font-size: 15px;
     cursor: pointer;
 }
+
+.task-preview-box {
+    background-color: rgba(0, 0, 0, 0.2);
+    padding: 0px;
+    border-radius: 15px;
+    z-index: 1000;
+}
+
+.task-preview-label {
+    padding: 12px;
+    font-size: 14px;
+    white-space: normal;  /* Ensure normal white-space to allow wrapping */
+}

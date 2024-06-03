@@ -26,3 +26,7 @@
     * add task persistence to save/load tasks from storage file for GNOME Shell restart or disabled extension
     * add settings to enable/disable task persistence
     * delete saved tasks when task persistence is disabled
+0.1.0
+    * add task preview feature expecially for long note takers
+    * add enable/disable and customization for task preview feature
+    * refactor prefs.js file for better code reusability

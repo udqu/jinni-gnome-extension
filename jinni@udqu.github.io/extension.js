@@ -1,4 +1,4 @@
-const { St, Clutter, Gio, GLib } = imports.gi;
+const { St, Clutter, Gio, GLib, Pango } = imports.gi;
 const Main = imports.ui.main;
 const PanelMenu = imports.ui.panelMenu;
 const PopupMenu = imports.ui.popupMenu;
@@ -9,9 +9,79 @@ const ByteArray = imports.byteArray;
 const self = ExtensionUtils.getCurrentExtension();
 const TasksFilePath = `${GLib.get_home_dir()}/.local/share/gnome-shell/extensions/${self.metadata.uuid}/savedTasks.json`;
 
+// Popup Preview Window Class
+class TaskPreview {
+    constructor(isEnabled, maxWidth, hoverTime) {
+        // Settings variables
+        this.isEnabled = isEnabled;
+        this.maxWidth = maxWidth;
+        this.hoverTime = hoverTime;
+
+        this._popup = new St.BoxLayout({
+            style_class: 'task-preview-box',
+            vertical: true,
+            visible: false,
+            reactive: true,
+        });
+
+        this._popupLabel = new St.Label({
+            style_class: 'task-preview-label',
+            y_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            y_expand: true,
+            width: maxWidth,
+        });
+
+        // Access the Clutter.Text object and set the wrapping properties
+        let clutterText = this._popupLabel.clutter_text;
+        clutterText.set_line_wrap(true); // Enable text wrapping
+        clutterText.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR); // Wrap on word boundaries or characters
+
+        this._popup.add_child(this._popupLabel);
+        Main.layoutManager.addChrome(this._popup);
+    }
+
+    show(text, relativeTo) {
+        // Check if preview enabled
+        if (!this.isEnabled) { return; }
+
+        // If the preview enabled then proceed
+        this._popupLabel.set_text(text);
+        this._popup.show();
+
+        // Get the label style padding
+        let padding = this._popupLabel.get_theme_node().get_padding(St.Side.ALL);
+        let popupWidth = this.maxWidth + 2 * padding;
+
+        // Calculate and set the size of the popup based on content or fixed size
+        let [minWidth, minHeight, natWidth, natHeight] = this._popupLabel.get_preferred_size();
+        this._popup.set_size(popupWidth, natHeight);
+
+        // Position the popup window
+        let [posX, posY] = relativeTo.get_transformed_position();
+        let [containerWidth, containerHeight] = relativeTo.get_transformed_size();
+        this._popup.set_position(posX - popupWidth - 10, posY);
+    }
+
+    hide() {
+        // Check if preview enabled
+        if (!this.isEnabled) { return; }
+
+        // If the preview enabled then proceed
+        this._popup.hide();
+    }
+
+    updateSettings(isEnabled, maxWidth, hoverTime) {
+        this.isEnabled = isEnabled;
+        this.maxWidth = maxWidth;
+        this.hoverTime = hoverTime;
+        this._popupLabel.width = maxWidth;
+    }
+}
+
 // TaskContainer class to handle task items
 class TaskContainer {
-    constructor(text, onDelete, onClick) {
+    constructor(text, onDelete, onClick, taskPreview) {
         // Create a layout for the task container
         this.container = new St.BoxLayout({ vertical: false, style_class: 'task-container' });
 
@@ -20,11 +90,9 @@ class TaskContainer {
             text: text,
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'counter-list-item',
-            x_expand: true // Make the label expand to fill the available space
+            x_expand: true, // Make the label expand to fill the available space
+            reactive: true  // Make the label reactive to clicks
         });
-
-        // Make the label reactive to clicks
-        this.textLabel.reactive = true;
 
         // Create a delete button
         this.deleteButton = new St.Button({
@@ -38,6 +106,9 @@ class TaskContainer {
         this._onClick = onClick;
         // Track click count
         this._clickCount = 0;
+        // Task preview related members
+        this._hoverTimeoutId = null;
+        this._taskPreview = taskPreview;
 
         // Connect button_press_event to handle single and double clicks
         this.textLabel.connect('button_press_event', (actor, event) => {
@@ -60,6 +131,13 @@ class TaskContainer {
         // Connect enter-event for textLabel to show delete button
         this.textLabel.connect('enter-event', () => {
             this.deleteButton.visible = true;
+            if (this._hoverTimeoutId === null) {
+                this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
+                    this._taskPreview.show(this.getText(), this.container);
+                    this._hoverTimeoutId = null;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
         });
 
         // Connect leave-event for textLabel to schedule hiding of delete button
@@ -67,10 +145,15 @@ class TaskContainer {
             if (!this._isMouseWithinActor(this.deleteButton, event)) {
                 this.deleteButton.visible = false;
             }
+            if (this._hoverTimeoutId !== null) {
+                GLib.Source.remove(this._hoverTimeoutId);
+                this._hoverTimeoutId = null;
+            }
+            this._taskPreview.hide();
         });
 
         // Connect leave-event for delete button to schedule hiding of delete button
-        this.deleteButton.connect('leave-event', (_, event) => {
+        this.deleteButton.connect('leave-event', () => {
             this.deleteButton.visible = false;
         });
 
@@ -111,9 +194,13 @@ class CounterExtension {
         this._indicator = null;
         this._settings = null;
         this._widthChangedHandler = null;
+        this._enablePreviewsChangedHandler = null;
+        this._maxPreviewSizeChangedHandler = null;
+        this._hoverTimeChangedHandler = null;
         this._entry = null;
         this._listBox = null;
         this._counter = 0;
+        this._taskPreview = null;
         // current edit variables
         this._currentEntry = null;
         this._currentTask = null;
@@ -184,6 +271,13 @@ class CounterExtension {
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
         this._updateWidth();  // Initialize with current value
 
+        // Set the task preview object
+        this._taskPreview = new TaskPreview(this._settings.get_boolean('enable-previews'), this._settings.get_int('max-preview-size'), this._settings.get_int('hover-time'));
+        this._enablePreviewsChangedHandler = this._settings.connect('changed::enable-previews', this._updateTaskPreviewSettings.bind(this));
+        this._maxPreviewSizeChangedHandler = this._settings.connect('changed::max-preview-size', this._updateTaskPreviewSettings.bind(this));
+        this._hoverTimeChangedHandler = this._settings.connect('changed::hover-time', this._updateTaskPreviewSettings.bind(this));
+        this._updateTaskPreviewSettings();
+
         // Connect the button press event to focus on the text entry box
         this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
 
@@ -196,9 +290,24 @@ class CounterExtension {
             this._indicator.destroy();
             this._indicator = null;
         }
-        if (this._settings && this._widthChangedHandler) {
-            this._settings.disconnect(this._widthChangedHandler);
-            this._widthChangedHandler = null;
+        if (this._settings) {
+            if (this._widthChangedHandler) {
+                this._settings.disconnect(this._widthChangedHandler);
+                this._widthChangedHandler = null;
+            }
+            if (this._enablePreviewsChangedHandler) {
+                this._settings.disconnect(this._enablePreviewsChangedHandler);
+                this._enablePreviewsChangedHandler = null;
+            }
+            if (this._maxPreviewSizeChangedHandler) {
+                this._settings.disconnect(this._maxPreviewSizeChangedHandler);
+                this._maxPreviewSizeChangedHandler = null;
+            }
+            if (this._hoverTimeChangedHandler) {
+                this._settings.disconnect(this._hoverTimeChangedHandler);
+                this._hoverTimeChangedHandler = null;
+            }
+            this._settings = null;
         }
         if (this._entryFocusOutHandlerId) {
             global.stage.disconnect(this._entryFocusOutHandlerId);
@@ -214,6 +323,13 @@ class CounterExtension {
         } else {
             log('Invalid tasklist-window-width setting.');
         }
+    }
+
+    _updateTaskPreviewSettings() {
+        let enablePreviews = this._settings.get_boolean('enable-previews');
+        let maxPreviewSize = this._settings.get_int('max-preview-size');
+        let hoverTime = this._settings.get_int('hover-time');
+        this._taskPreview.updateSettings(enablePreviews, maxPreviewSize, hoverTime);
     }
 
     _loadStylesheet() {
@@ -254,7 +370,7 @@ class CounterExtension {
         let text = this._entry.get_text().trim();
         if (text !== "") {
             // Create a task
-            let task = new TaskContainer(text, this._deleteTask.bind(this), this._onTaskClicked.bind(this));
+            let task = new TaskContainer(text, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
 
             // Add the task container to the list
             this._listBox.add_child(task.getContainer());
@@ -420,7 +536,7 @@ class CounterExtension {
                 let contentsString = ByteArray.toString(contents);
                 let tasks = JSON.parse(contentsString);
                 tasks.forEach(taskText => {
-                    let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this));
+                    let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
                     this._listBox.add_child(task.getContainer());
                 });
                 this._counter = tasks.length;

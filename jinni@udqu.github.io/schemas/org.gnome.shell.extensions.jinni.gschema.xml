@@ -11,5 +11,20 @@
             <summary>Persist tasks across sessions</summary>
             <description>Whether to save and load tasks across GNOME Shell sessions.</description>
         </key>
+        <key name="enable-previews" type="b">
+            <default>false</default>
+            <summary>Enable task previews</summary>
+            <description>If true, task previews will be shown on hover.</description>
+        </key>
+        <key name="max-preview-size" type="i">
+            <default>300</default>
+            <summary>Maximum preview window size</summary>
+            <description>The maximum size of the preview window in pixels.</description>
+        </key>
+        <key name="hover-time" type="i">
+            <default>1000</default>
+            <summary>Hover time for preview</summary>
+            <description>The time in milliseconds before the task preview appears.</description>
+        </key>
     </schema>
 </schemalist>
