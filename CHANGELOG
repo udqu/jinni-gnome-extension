@@ -30,3 +30,7 @@
     * add task preview feature expecially for long note takers
     * add enable/disable and customization for task preview feature
     * refactor prefs.js file for better code reusability
+0.1.1
+    * refactor taskContainer object for better signal handling and hand-off
+    * switch from reactive textLabel to reactive taskContainer
+    * tweak css file parameters to remove twitches in task editing

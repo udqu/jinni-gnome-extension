@@ -83,15 +83,14 @@ class TaskPreview {
 class TaskContainer {
     constructor(text, onDelete, onClick, taskPreview) {
         // Create a layout for the task container
-        this.container = new St.BoxLayout({ vertical: false, style_class: 'task-container' });
+        this.container = new St.BoxLayout({ vertical: false, style_class: 'task-container', reactive: true });
 
         // Create a label for the entered text and add to the list
         this.textLabel = new St.Label({
             text: text,
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'counter-list-item',
-            x_expand: true, // Make the label expand to fill the available space
-            reactive: true  // Make the label reactive to clicks
+            x_expand: true  // Make the label expand to fill the available space
         });
 
         // Create a delete button
@@ -111,8 +110,8 @@ class TaskContainer {
         this._taskPreview = taskPreview;
 
         // Connect button_press_event to handle single and double clicks
-        this.textLabel.connect('button_press_event', (actor, event) => {
-            if (event.get_button() === Clutter.BUTTON_PRIMARY) {
+        this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
+            if (event.get_button() === Clutter.BUTTON_PRIMARY && this._isMouseWithinActor(this.textLabel, event)) {
                 this._clickCount++;
                 // Handle multiple click types
                 if (this._clickCount === 1) {
@@ -128,38 +127,47 @@ class TaskContainer {
             }
         });
 
-        // Connect enter-event for textLabel to show delete button
-        this.textLabel.connect('enter-event', () => {
-            this.deleteButton.visible = true;
+        // Connect enter-event for container to show delete button
+        this._enterEventId = this.container.connect('enter-event', () => {
+            if (this.deleteButton && this.container.mapped) {
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    this.deleteButton.visible = true;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
             if (this._hoverTimeoutId === null) {
                 this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
-                    this._taskPreview.show(this.getText(), this.container);
+                    if (this._taskPreview) {
+                        this._taskPreview.show(this.getText(), this.container);
+                    }
                     this._hoverTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
             }
         });
 
-        // Connect leave-event for textLabel to schedule hiding of delete button
-        this.textLabel.connect('leave-event', (_, event) => {
-            if (!this._isMouseWithinActor(this.deleteButton, event)) {
-                this.deleteButton.visible = false;
+        // Connect leave-event for container to schedule hiding of delete button
+        this._leaveEventId = this.container.connect('leave-event', (_, event) => {
+            if (this.deleteButton && !this._isMouseWithinActor(this.deleteButton, event)) {
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    this.deleteButton.visible = false;
+                    return GLib.SOURCE_REMOVE;
+                });
             }
             if (this._hoverTimeoutId !== null) {
                 GLib.Source.remove(this._hoverTimeoutId);
                 this._hoverTimeoutId = null;
             }
-            this._taskPreview.hide();
-        });
-
-        // Connect leave-event for delete button to schedule hiding of delete button
-        this.deleteButton.connect('leave-event', () => {
-            this.deleteButton.visible = false;
+            if (this._taskPreview) {
+                this._taskPreview.hide();
+            }
         });
 
         // Connect delete button click event
-        this.deleteButton.connect('clicked', () => {
-            this._onDelete(this);
+        this._deleteButtonClickedEventId = this.deleteButton.connect('clicked', () => {
+            if (this._onDelete) {
+                this._onDelete(this);
+            }
         });
 
         // Add label and delete button to the task container
@@ -176,15 +184,59 @@ class TaskContainer {
     }
 
     setText(newText) {
-        this.textLabel.set_text(newText);
+        if (this.textLabel) {
+            this.textLabel.set_text(newText);
+        }
     }
 
     getText() {
-        return this.textLabel.get_text();
+        return this.textLabel ? this.textLabel.get_text() : '';
     }
 
     getContainer() {
         return this.container;
+    }
+
+    destroy() {
+        if (this.container) {
+            if (this._buttonPressEventId) {
+                this.container.disconnect(this._buttonPressEventId);
+            }
+            if (this._enterEventId) {
+                this.container.disconnect(this._enterEventId);
+            }
+            if (this._leaveEventId) {
+                this.container.disconnect(this._leaveEventId);
+            }
+        }
+        if (this.deleteButton) {
+            if (this._deleteButtonClickedEventId) {
+                this.deleteButton.disconnect(this._deleteButtonClickedEventId);
+            }
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this.deleteButton.destroy();
+                this.deleteButton = null;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        if (this.textLabel) {
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this.textLabel.destroy();
+                this.textLabel = null;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        if (this.container) {
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this.container.destroy();
+                this.container = null;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        if (this._hoverTimeoutId !== null) {
+            GLib.Source.remove(this._hoverTimeoutId);
+            this._hoverTimeoutId = null;
+        }
     }
 }
 
@@ -442,7 +494,8 @@ class CounterExtension {
 
     _deleteTask(task) {
         // Remove the task item from the list
-        this._listBox.remove_child(task.getContainer());
+        // this._listBox.remove_child(task.getContainer());
+        task.getContainer().destroy();
 
         // Decrement the counter and update the label
         this._counter--;
