@@ -40,3 +40,22 @@
     * rewrite prefs.js with Adw.PreferencesPage/SwitchRow/SpinRow and settings.bind(), replacing the manual Gtk widget wiring
     * clean up the task preview popup actor on disable() to avoid leaking chrome across enable/disable cycles
     * bump shell-version to 45-49; drop support for GNOME 3.36-43, which cannot load ESM extensions
+0.2.1
+    * add GNOME Shell 50 to shell-version after testing the port live in a GNOME 50 VM
+    * fix prefs.js's resource import path (the Extensions app resolves its bundled
+      modules under resource:///org/gnome/Shell/Extensions/js/..., not the
+      lowercase path extension.js uses inside the Shell process)
+0.2.2
+    * track tasks in an explicit ordered list instead of introspecting the task
+      list's DOM structure in _saveTasks(); also fixes a task being silently
+      dropped from persisted storage if a save happens to run while it's
+      mid-edit
+    * replace the hand-rolled double-click timer with Clutter's built-in
+      click_count tracking, removing an untracked timeout that leaked past
+      task deletion
+    * guard the deferred idle_add callbacks in TaskContainer against a
+      destroy-in-flight race, and cancel any still-pending ones in destroy()
+    * create the extension's data directory before writing savedTasks.json,
+      instead of silently failing to persist on a fresh profile
+    * fix dead error handling around enable()'s settings fetch: getSettings()
+      throws rather than returning a falsy value on failure

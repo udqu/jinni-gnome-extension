@@ -112,35 +112,37 @@ class TaskContainer {
         // Externally defined methods
         this._onDelete = onDelete;
         this._onClick = onClick;
-        // Track click count
-        this._clickCount = 0;
         // Task preview related members
         this._hoverTimeoutId = null;
         this._taskPreview = taskPreview;
+        // Pending idle sources for the delete button's visibility, tracked so
+        // destroy() can cancel them instead of letting a stale callback run
+        // against an actor that's already gone.
+        this._showDeleteIdleId = null;
+        this._hideDeleteIdleId = null;
 
-        // Connect button_press_event to handle single and double clicks
+        // Connect button_press_event to handle single and double clicks.
+        // Clutter tracks click_count itself (honoring the desktop's configured
+        // double-click time/distance), so there's no need to hand-roll it.
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
             if (event.get_button() === Clutter.BUTTON_PRIMARY && this._isMouseWithinActor(this.textLabel, event)) {
-                this._clickCount++;
-                // Handle multiple click types
-                if (this._clickCount === 1) {
+                let clickCount = event.get_click_count();
+                if (clickCount === 1) {
                     this._onClick('single', this);
-                } else if (this._clickCount === 2) {
+                } else if (clickCount === 2) {
                     this._onClick('double', this);
                 }
-                // Reset click count after a timeout
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-                    this._clickCount = 0;
-                    return GLib.SOURCE_REMOVE;
-                });
             }
         });
 
         // Connect enter-event for container to show delete button
         this._enterEventId = this.container.connect('enter-event', () => {
-            if (this.deleteButton && this.container.mapped) {
-                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    this.deleteButton.visible = true;
+            if (this.deleteButton && this.container.mapped && this._showDeleteIdleId === null) {
+                this._showDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    if (this.deleteButton) {
+                        this.deleteButton.visible = true;
+                    }
+                    this._showDeleteIdleId = null;
                     return GLib.SOURCE_REMOVE;
                 });
             }
@@ -157,9 +159,12 @@ class TaskContainer {
 
         // Connect leave-event for container to schedule hiding of delete button
         this._leaveEventId = this.container.connect('leave-event', (_, event) => {
-            if (this.deleteButton && !this._isMouseWithinActor(this.deleteButton, event)) {
-                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    this.deleteButton.visible = false;
+            if (this.deleteButton && !this._isMouseWithinActor(this.deleteButton, event) && this._hideDeleteIdleId === null) {
+                this._hideDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    if (this.deleteButton) {
+                        this.deleteButton.visible = false;
+                    }
+                    this._hideDeleteIdleId = null;
                     return GLib.SOURCE_REMOVE;
                 });
             }
@@ -223,28 +228,42 @@ class TaskContainer {
                 this.deleteButton.disconnect(this._deleteButtonClickedEventId);
             }
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this.deleteButton.destroy();
-                this.deleteButton = null;
+                if (this.deleteButton) {
+                    this.deleteButton.destroy();
+                    this.deleteButton = null;
+                }
                 return GLib.SOURCE_REMOVE;
             });
         }
         if (this.textLabel) {
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this.textLabel.destroy();
-                this.textLabel = null;
+                if (this.textLabel) {
+                    this.textLabel.destroy();
+                    this.textLabel = null;
+                }
                 return GLib.SOURCE_REMOVE;
             });
         }
         if (this.container) {
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this.container.destroy();
-                this.container = null;
+                if (this.container) {
+                    this.container.destroy();
+                    this.container = null;
+                }
                 return GLib.SOURCE_REMOVE;
             });
         }
         if (this._hoverTimeoutId !== null) {
             GLib.Source.remove(this._hoverTimeoutId);
             this._hoverTimeoutId = null;
+        }
+        if (this._showDeleteIdleId !== null) {
+            GLib.Source.remove(this._showDeleteIdleId);
+            this._showDeleteIdleId = null;
+        }
+        if (this._hideDeleteIdleId !== null) {
+            GLib.Source.remove(this._hideDeleteIdleId);
+            this._hideDeleteIdleId = null;
         }
     }
 }
@@ -264,6 +283,10 @@ export default class JinniExtension extends Extension {
         this._counter = 0;
         this._taskPreview = null;
         this._tasksFilePath = null;
+        // Ordered list of live TaskContainer instances, kept in sync with
+        // _listBox's children. This is the source of truth for persistence,
+        // rather than introspecting _listBox's DOM structure.
+        this._tasks = [];
         // current edit variables
         this._currentEntry = null;
         this._currentTask = null;
@@ -277,10 +300,13 @@ export default class JinniExtension extends Extension {
         // Load the CSS file
         this._loadStylesheet();
 
-        // Retrieve settings
-        this._settings = this.getSettings();
-        if (!this._settings) {
-            console.error('Failed to retrieve settings for the extension.');
+        // Retrieve settings. getSettings() throws (rather than returning a
+        // falsy value) if the compiled schema can't be found, so guard the
+        // fetch itself instead of checking the result afterwards.
+        try {
+            this._settings = this.getSettings();
+        } catch (error) {
+            console.error(`Failed to retrieve settings for the extension: ${error.message}`);
             return;
         }
 
@@ -389,6 +415,7 @@ export default class JinniExtension extends Extension {
         this._currentTask = null;
         this._currentIndex = null;
         this._tasksFilePath = null;
+        this._tasks = [];
     }
 
     _updateWidth() {
@@ -450,6 +477,7 @@ export default class JinniExtension extends Extension {
 
             // Add the task container to the list
             this._listBox.add_child(task.getContainer());
+            this._tasks.push(task);
 
             // Clear the entry text
             this._entry.set_text("");
@@ -517,6 +545,12 @@ export default class JinniExtension extends Extension {
     }
 
     _deleteTask(task) {
+        // Remove the task from our tracked list
+        let index = this._tasks.indexOf(task);
+        if (index !== -1) {
+            this._tasks.splice(index, 1);
+        }
+
         // Remove the task item from the list
         // this._listBox.remove_child(task.getContainer());
         task.getContainer().destroy();
@@ -575,19 +609,22 @@ export default class JinniExtension extends Extension {
             return;
         }
 
-        // Get the task lists
-        let tasks = this._listBox.get_children().map(child => {
-            if (child instanceof St.BoxLayout) {
-                // get the text of the label of task container
-                let text = child.get_child_at_index(0).get_text();
-                return text;
-            }
-            return '';
-        }).filter(text => text !== '');
+        // Get the task texts straight from the tracked TaskContainer list.
+        // A task currently being edited still reports its last-committed
+        // text via getText(), so it's saved (not silently dropped) if a
+        // save happens to run mid-edit.
+        let tasks = this._tasks.map(task => task.getText()).filter(text => text !== '');
 
         // Attempt to save the texts for tasks, log error message if it fails
         try {
             let file = Gio.File.new_for_path(this._tasksFilePath);
+
+            // Ensure the extension's data directory exists before writing to it
+            let parentDir = file.get_parent();
+            if (parentDir && !parentDir.query_exists(null)) {
+                parentDir.make_directory_with_parents(null);
+            }
+
             let [success, tag] = file.replace_contents(
                 JSON.stringify(tasks),
                 null,  // etag
@@ -615,6 +652,7 @@ export default class JinniExtension extends Extension {
                 tasks.forEach(taskText => {
                     let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
                     this._listBox.add_child(task.getContainer());
+                    this._tasks.push(task);
                 });
                 this._counter = tasks.length;
                 this._label.set_text(`${this._counter}`);
