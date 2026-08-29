@@ -34,3 +34,9 @@
     * refactor taskContainer object for better signal handling and hand-off
     * switch from reactive textLabel to reactive taskContainer
     * tweak css file parameters to remove twitches in task editing
+0.2.0
+    * port extension.js and prefs.js to the ES module / class-based extension API required by GNOME Shell 45+
+    * drop imports.misc.extensionUtils and imports.byteArray in favor of the Extension/ExtensionPreferences base classes and TextDecoder
+    * rewrite prefs.js with Adw.PreferencesPage/SwitchRow/SpinRow and settings.bind(), replacing the manual Gtk widget wiring
+    * clean up the task preview popup actor on disable() to avoid leaking chrome across enable/disable cycles
+    * bump shell-version to 45-49; drop support for GNOME 3.36-43, which cannot load ESM extensions
