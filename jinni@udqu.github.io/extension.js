@@ -1,13 +1,13 @@
-const { St, Clutter, Gio, GLib, Pango } = imports.gi;
-const Main = imports.ui.main;
-const PanelMenu = imports.ui.panelMenu;
-const PopupMenu = imports.ui.popupMenu;
-const ExtensionUtils = imports.misc.extensionUtils;
-const ByteArray = imports.byteArray;
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 
-// Define self for this extension
-const self = ExtensionUtils.getCurrentExtension();
-const TasksFilePath = `${GLib.get_home_dir()}/.local/share/gnome-shell/extensions/${self.metadata.uuid}/savedTasks.json`;
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 // Popup Preview Window Class
 class TaskPreview {
@@ -76,6 +76,15 @@ class TaskPreview {
         this.maxWidth = maxWidth;
         this.hoverTime = hoverTime;
         this._popupLabel.width = maxWidth;
+    }
+
+    destroy() {
+        if (this._popup) {
+            Main.layoutManager.removeChrome(this._popup);
+            this._popup.destroy();
+            this._popup = null;
+            this._popupLabel = null;
+        }
     }
 }
 
@@ -240,9 +249,10 @@ class TaskContainer {
     }
 }
 
-// Main extension object
-class CounterExtension {
-    constructor() {
+// Main extension class
+export default class JinniExtension extends Extension {
+    constructor(metadata) {
+        super(metadata);
         this._indicator = null;
         this._settings = null;
         this._widthChangedHandler = null;
@@ -253,6 +263,7 @@ class CounterExtension {
         this._listBox = null;
         this._counter = 0;
         this._taskPreview = null;
+        this._tasksFilePath = null;
         // current edit variables
         this._currentEntry = null;
         this._currentTask = null;
@@ -261,13 +272,15 @@ class CounterExtension {
     }
 
     enable() {
+        this._tasksFilePath = `${GLib.get_home_dir()}/.local/share/gnome-shell/extensions/${this.uuid}/savedTasks.json`;
+
         // Load the CSS file
         this._loadStylesheet();
 
         // Retrieve settings
-        this._settings = ExtensionUtils.getSettings('org.gnome.shell.extensions.jinni');
+        this._settings = this.getSettings();
         if (!this._settings) {
-            log('Failed to retrieve settings for the extension.');
+            console.error('Failed to retrieve settings for the extension.');
             return;
         }
 
@@ -365,6 +378,17 @@ class CounterExtension {
             global.stage.disconnect(this._entryFocusOutHandlerId);
             this._entryFocusOutHandlerId = null;
         }
+        if (this._taskPreview) {
+            this._taskPreview.destroy();
+            this._taskPreview = null;
+        }
+        this._entry = null;
+        this._listBox = null;
+        this._label = null;
+        this._currentEntry = null;
+        this._currentTask = null;
+        this._currentIndex = null;
+        this._tasksFilePath = null;
     }
 
     _updateWidth() {
@@ -373,7 +397,7 @@ class CounterExtension {
             // Set the width of the task list window
             this._indicator.menu.actor.width = taskListWindowWidth;
         } else {
-            log('Invalid tasklist-window-width setting.');
+            console.error('Invalid tasklist-window-width setting.');
         }
     }
 
@@ -388,12 +412,12 @@ class CounterExtension {
         try {
             // Ensure the stylesheet is loaded
             let themeContext = St.ThemeContext.get_for_stage(global.stage);
-            let stylesheet = Gio.File.new_for_path(`${self.path}/stylesheet.css`);
+            let stylesheet = Gio.File.new_for_path(`${this.path}/stylesheet.css`);
 
             // Add the stylesheet to the theme context
             themeContext.get_theme().load_stylesheet(stylesheet);
         } catch (error) {
-            log(`Failed to load stylesheet: ${error.message}`);
+            console.error(`Failed to load stylesheet: ${error.message}`);
         }
     }
 
@@ -563,7 +587,7 @@ class CounterExtension {
 
         // Attempt to save the texts for tasks, log error message if it fails
         try {
-            let file = Gio.file_new_for_path(TasksFilePath);
+            let file = Gio.File.new_for_path(this._tasksFilePath);
             let [success, tag] = file.replace_contents(
                 JSON.stringify(tasks),
                 null,  // etag
@@ -572,7 +596,7 @@ class CounterExtension {
                 null   // cancellable
             );
         } catch (error) {
-            log(`Failed to save tasks to file: ${error.message}`);
+            console.error(`Failed to save tasks to file: ${error.message}`);
         }
     }
 
@@ -584,9 +608,9 @@ class CounterExtension {
         }
 
         try {
-            let [success, contents] = GLib.file_get_contents(TasksFilePath);
+            let [success, contents] = GLib.file_get_contents(this._tasksFilePath);
             if (success) {
-                let contentsString = ByteArray.toString(contents);
+                let contentsString = new TextDecoder().decode(contents);
                 let tasks = JSON.parse(contentsString);
                 tasks.forEach(taskText => {
                     let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
@@ -596,22 +620,18 @@ class CounterExtension {
                 this._label.set_text(`${this._counter}`);
             }
         } catch (error) {
-            log(`Failed to load tasks from file: ${error.message}`);
+            console.error(`Failed to load tasks from file: ${error.message}`);
         }
     }
 
     _clearTasksFile() {
         try {
-            let file = Gio.file_new_for_path(TasksFilePath);
+            let file = Gio.File.new_for_path(this._tasksFilePath);
             if (file.query_exists(null)) {
                 file.delete(null);
             }
         } catch (error) {
-            log(`Failed to clear tasks file: ${error.message}`);
+            console.error(`Failed to clear tasks file: ${error.message}`);
         }
     }
-}
-
-function init() {
-    return new CounterExtension();
 }
