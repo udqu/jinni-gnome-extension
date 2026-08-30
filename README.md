@@ -25,6 +25,10 @@ gnome-extensions install jinni@udqu.github.io.shell-extension.zip
 
 Then log out and back in, and enable it in the Extensions app (or `gnome-extensions enable jinni@udqu.github.io`).
 
+## Credits
+
+Jinni is a lightweight task manager app for the GNOME Shell Top Bar. The original app was developed by Dino Angelov for OS X 10.8 or later (Intel only), released in 2015: https://mac.softpedia.com/get/Utilities/Jinni.shtml. This GNOME Shell extension is an independent implementation for Linux, since no equivalent existed there, and isn't affiliated with the original.
+
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE).
