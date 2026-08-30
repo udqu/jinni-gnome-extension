@@ -152,7 +152,10 @@ class TaskContainer {
         this._enterEventId = this.container.connect('enter-event', () => {
             if (this.deleteButton && this.container.mapped && this._showDeleteIdleId === null) {
                 this._showDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    if (this.deleteButton) {
+                    // Re-check on-stage-ness, not just non-null: the task may
+                    // have been pulled out of the list (e.g. to start an edit)
+                    // in the time between scheduling and this idle firing.
+                    if (this.deleteButton && this.container && this.container.get_stage()) {
                         this.deleteButton.visible = true;
                     }
                     this._showDeleteIdleId = null;
@@ -161,7 +164,7 @@ class TaskContainer {
             }
             if (this._hoverTimeoutId === null) {
                 this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
-                    if (this._taskPreview) {
+                    if (this._taskPreview && this.container && this.container.get_stage()) {
                         this._taskPreview.show(this.getText(), this.container);
                     }
                     this._hoverTimeoutId = null;
@@ -174,7 +177,7 @@ class TaskContainer {
         this._leaveEventId = this.container.connect('leave-event', (_, event) => {
             if (this.deleteButton && !this._isMouseWithinActor(this.deleteButton, event) && this._hideDeleteIdleId === null) {
                 this._hideDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    if (this.deleteButton) {
+                    if (this.deleteButton && this.container && this.container.get_stage()) {
                         this.deleteButton.visible = false;
                     }
                     this._hideDeleteIdleId = null;
