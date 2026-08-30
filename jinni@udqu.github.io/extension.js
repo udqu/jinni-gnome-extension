@@ -321,6 +321,7 @@ export default class JinniExtension extends Extension {
         this._indicator = null;
         this._settings = null;
         this._widthChangedHandler = null;
+        this._persistTasksChangedHandler = null;
         this._enablePreviewsChangedHandler = null;
         this._maxPreviewSizeChangedHandler = null;
         this._hoverTimeChangedHandler = null;
@@ -408,6 +409,14 @@ export default class JinniExtension extends Extension {
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
         this._updateWidth();  // Initialize with current value
 
+        // Clear the saved-tasks file the moment persistence is turned off,
+        // rather than leaving stale data on disk until the next enable()
+        this._persistTasksChangedHandler = this._settings.connect('changed::persist-tasks', () => {
+            if (!this._settings.get_boolean('persist-tasks')) {
+                this._clearTasksFile();
+            }
+        });
+
         // Set the task preview object
         this._taskPreview = new TaskPreview(this._settings.get_boolean('enable-previews'), this._settings.get_int('max-preview-size'), this._settings.get_int('hover-time'));
         this._enablePreviewsChangedHandler = this._settings.connect('changed::enable-previews', this._updateTaskPreviewSettings.bind(this));
@@ -431,6 +440,10 @@ export default class JinniExtension extends Extension {
             if (this._widthChangedHandler) {
                 this._settings.disconnect(this._widthChangedHandler);
                 this._widthChangedHandler = null;
+            }
+            if (this._persistTasksChangedHandler) {
+                this._settings.disconnect(this._persistTasksChangedHandler);
+                this._persistTasksChangedHandler = null;
             }
             if (this._enablePreviewsChangedHandler) {
                 this._settings.disconnect(this._enablePreviewsChangedHandler);
