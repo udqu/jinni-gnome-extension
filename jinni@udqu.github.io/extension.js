@@ -698,7 +698,6 @@ export default class JinniExtension extends Extension {
     // where it would land; nothing about the task order or persisted
     // storage changes until _endDrag() commits it on release.
     _beginDrag(task) {
-        console.log(`[jinni-drag] _beginDrag called for "${task.getText()}"`);
         let container = task.getContainer();
         if (!container || !container.get_stage()) {
             return;
@@ -788,7 +787,6 @@ export default class JinniExtension extends Extension {
     // Finish a drag: commit the reorder (and save) if shouldCommit is true,
     // otherwise just clean up and leave everything where it started.
     _endDrag(shouldCommit) {
-        console.log(`[jinni-drag] _endDrag called, shouldCommit=${shouldCommit}, draggedTask=${!!this._draggedTask}`);
         if (!this._draggedTask) {
             return;
         }
