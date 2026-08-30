@@ -118,10 +118,10 @@ class TaskContainer {
         // Task preview related members
         this._hoverTimeoutId = null;
         this._taskPreview = taskPreview;
-        // Pending idle source for recomputing the delete button's
-        // visibility, tracked so destroy()/resetHoverState() can cancel it
-        // instead of letting a stale callback run later.
-        this._deleteVisibilityIdleId = null;
+        // Whether this task is currently considered hovered. Driven by the
+        // extension's list-wide motion tracking rather than this task's own
+        // enter/leave-event -- see updateHoverState() for why.
+        this._isHovered = false;
 
         // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
@@ -147,32 +147,6 @@ class TaskContainer {
             }
         });
 
-        // Connect enter-event for container to show delete button
-        this._enterEventId = this.container.connect('enter-event', () => {
-            this._scheduleDeleteVisibilityUpdate();
-            if (this._hoverTimeoutId === null) {
-                this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
-                    if (this._taskPreview && this.container && this.container.get_stage()) {
-                        this._taskPreview.show(this.getText(), this.container);
-                    }
-                    this._hoverTimeoutId = null;
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
-        });
-
-        // Connect leave-event for container to schedule hiding of delete button
-        this._leaveEventId = this.container.connect('leave-event', () => {
-            this._scheduleDeleteVisibilityUpdate();
-            if (this._hoverTimeoutId !== null) {
-                GLib.Source.remove(this._hoverTimeoutId);
-                this._hoverTimeoutId = null;
-            }
-            if (this._taskPreview) {
-                this._taskPreview.hide();
-            }
-        });
-
         // Connect delete button click event
         this._deleteButtonClickedEventId = this.deleteButton.connect('clicked', () => {
             if (this._onDelete) {
@@ -185,61 +159,69 @@ class TaskContainer {
         this.container.add_child(this.deleteButton);
     }
 
-    // Schedule (at most one at a time) a recomputation of the delete
-    // button's visibility. Deliberately doesn't bake in a true/false at
-    // schedule time -- under fast successive hovers, several of these can
-    // end up queued close together, and whichever runs last should always
-    // land on the actually-correct state rather than a value decided back
-    // when a stale enter/leave event happened to fire.
-    _scheduleDeleteVisibilityUpdate() {
-        if (this._deleteVisibilityIdleId !== null) {
-            return;
-        }
-        this._deleteVisibilityIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            if (this.deleteButton && this.container && this.container.get_stage()) {
-                this.deleteButton.visible = this._isPointerWithinContainer();
-            }
-            this._deleteVisibilityIdleId = null;
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    // Whether the pointer is currently over this task's container, queried
-    // live rather than from a possibly-stale event. Checking against the
-    // container's own bounds (rather than e.g. just the label) means
-    // hovering the delete button itself -- a child fully inside those
-    // bounds -- still counts as "within", so the button doesn't flicker
-    // away right as it's about to be clicked.
-    _isPointerWithinContainer() {
+    // Whether the given stage-space point falls within this task's
+    // container -- used by the extension's list-wide motion tracking (see
+    // JinniExtension._onListBoxMotionEvent) to decide this task's hover
+    // state. Checking the container's own bounds (rather than e.g. just
+    // the label) means hovering the delete button itself -- a child fully
+    // inside those bounds -- still counts as "within", so the button
+    // doesn't flicker away right as it's about to be clicked.
+    isPointAt(x, y) {
         if (!this.container || !this.container.get_stage()) {
             return false;
         }
-        let [x, y] = global.get_pointer();
         let [x1, y1] = this.container.get_transformed_position();
         let [width, height] = this.container.get_transformed_size();
         return x >= x1 && x <= x1 + width && y >= y1 && y <= y1 + height;
     }
 
-    // Reset hover-related visual state and cancel any pending hover
-    // timers/idle sources. Needed when the task is pulled out of the list
-    // for editing: it stops receiving enter/leave events at that point, so
-    // nothing else would otherwise clear a delete-button-visible or
-    // preview-pending state left over from the hover that started the edit.
-    resetHoverState() {
-        if (this._hoverTimeoutId !== null) {
-            GLib.Source.remove(this._hoverTimeoutId);
-            this._hoverTimeoutId = null;
+    // Apply a hover-state change: show/hide the delete button and start or
+    // cancel the preview timer accordingly. Driven externally (by the
+    // extension's list-wide motion/leave tracking) rather than from this
+    // task's own enter/leave-event, because Clutter's per-actor crossing
+    // detection can skip firing leave-event for a row swept past quickly --
+    // it only compares "last actor under pointer" to "current actor under
+    // pointer" per input sample, so a row that's never sampled as "current"
+    // during a fast sweep gets neither an enter nor a leave, and its state
+    // would otherwise never get corrected. Motion events on the whole list
+    // don't have that failure mode.
+    updateHoverState(isHovered) {
+        if (isHovered === this._isHovered) {
+            return;
         }
-        if (this._deleteVisibilityIdleId !== null) {
-            GLib.Source.remove(this._deleteVisibilityIdleId);
-            this._deleteVisibilityIdleId = null;
-        }
+        this._isHovered = isHovered;
         if (this.deleteButton) {
-            this.deleteButton.visible = false;
+            this.deleteButton.visible = isHovered;
         }
-        if (this._taskPreview) {
-            this._taskPreview.hide();
+        if (isHovered) {
+            if (this._hoverTimeoutId === null) {
+                this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
+                    if (this._taskPreview && this.container && this.container.get_stage()) {
+                        this._taskPreview.show(this.getText(), this.container);
+                    }
+                    this._hoverTimeoutId = null;
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        } else {
+            if (this._hoverTimeoutId !== null) {
+                GLib.Source.remove(this._hoverTimeoutId);
+                this._hoverTimeoutId = null;
+            }
+            if (this._taskPreview) {
+                this._taskPreview.hide();
+            }
         }
+    }
+
+    // Force hover state to false regardless of the current value. Needed
+    // when the task is pulled out of the list for editing: it stops
+    // participating in list-wide motion tracking at that point, so nothing
+    // else would otherwise clear a delete-button-visible or preview-pending
+    // state left over from the hover that started the edit.
+    resetHoverState() {
+        this._isHovered = true; // force updateHoverState(false) to act
+        this.updateHoverState(false);
     }
 
     // Function to check if the mouse is within the boundaries of an actor
@@ -268,12 +250,6 @@ class TaskContainer {
         if (this.container) {
             if (this._buttonPressEventId) {
                 this.container.disconnect(this._buttonPressEventId);
-            }
-            if (this._enterEventId) {
-                this.container.disconnect(this._enterEventId);
-            }
-            if (this._leaveEventId) {
-                this.container.disconnect(this._leaveEventId);
             }
         }
         if (this.deleteButton) {
@@ -314,10 +290,6 @@ class TaskContainer {
             GLib.Source.remove(this._clickResetTimeoutId);
             this._clickResetTimeoutId = null;
         }
-        if (this._deleteVisibilityIdleId !== null) {
-            GLib.Source.remove(this._deleteVisibilityIdleId);
-            this._deleteVisibilityIdleId = null;
-        }
     }
 }
 
@@ -334,6 +306,11 @@ export default class JinniExtension extends Extension {
         this._hoverTimeChangedHandler = null;
         this._entry = null;
         this._listBox = null;
+        // Not manually disconnected in disable(): _listBox is destroyed as
+        // part of this._indicator.destroy(), which cleans up its own signal
+        // connections. Kept only for consistency/clarity of ownership.
+        this._listBoxMotionHandler = null;
+        this._listBoxLeaveHandler = null;
         this._counter = 0;
         this._taskPreview = null;
         this._tasksFilePath = null;
@@ -398,8 +375,15 @@ export default class JinniExtension extends Extension {
         // Create a box to hold the list of recorded texts
         this._listBox = new St.BoxLayout({
             vertical: true,
-            style_class: 'counter-list'
+            style_class: 'counter-list',
+            reactive: true
         });
+
+        // Track hover state for all tasks from motion events on the whole
+        // list, rather than each task's own enter/leave-event -- see
+        // TaskContainer.updateHoverState() for why that's needed.
+        this._listBoxMotionHandler = this._listBox.connect('motion-event', this._onListBoxMotionEvent.bind(this));
+        this._listBoxLeaveHandler = this._listBox.connect('leave-event', this._onListBoxLeaveEvent.bind(this));
 
         // Create a container for the text box and list inside a PopupMenu.PopupMenuSection
         let container = new PopupMenu.PopupMenuSection();
@@ -476,6 +460,8 @@ export default class JinniExtension extends Extension {
         }
         this._entry = null;
         this._listBox = null;
+        this._listBoxMotionHandler = null;
+        this._listBoxLeaveHandler = null;
         this._label = null;
         this._currentEntry = null;
         this._currentTask = null;
@@ -512,6 +498,19 @@ export default class JinniExtension extends Extension {
         } catch (error) {
             console.error(`Failed to load stylesheet: ${error.message}`);
         }
+    }
+
+    // Recompute every task's hover state from the pointer's current
+    // position on each motion sample over the list. See
+    // TaskContainer.updateHoverState() for why this lives here rather than
+    // on each task's own enter/leave-event.
+    _onListBoxMotionEvent(actor, event) {
+        let [x, y] = event.get_coords();
+        this._tasks.forEach(task => task.updateHoverState(task.isPointAt(x, y)));
+    }
+
+    _onListBoxLeaveEvent() {
+        this._tasks.forEach(task => task.updateHoverState(false));
     }
 
     _onIndicatorClicked(actor, event) {
