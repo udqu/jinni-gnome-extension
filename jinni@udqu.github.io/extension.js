@@ -240,17 +240,24 @@ class TaskContainer {
     _trackDragThreshold(pressEvent) {
         let [startX, startY] = pressEvent.get_coords();
         let threshold = Clutter.Settings.get_default().dnd_drag_threshold;
+        console.log(`[jinni-drag] _trackDragThreshold: threshold=${threshold} start=(${startX},${startY})`);
         this._dragThresholdHandlerId = global.stage.connect('captured-event', (actor, event) => {
             let type = event.type();
             if (type === Clutter.EventType.MOTION) {
                 let [x, y] = event.get_coords();
-                if (Math.hypot(x - startX, y - startY) >= threshold) {
+                let dist = Math.hypot(x - startX, y - startY);
+                console.log(`[jinni-drag] motion during threshold-watch: dist=${dist}`);
+                if (dist >= threshold) {
+                    console.log(`[jinni-drag] threshold exceeded, calling onClick('dragstart')`);
                     this._disconnectDragThreshold();
                     if (this.container && this.container.get_stage()) {
                         this._onClick('dragstart', this);
+                    } else {
+                        console.log(`[jinni-drag] container not on stage, dragstart suppressed`);
                     }
                 }
             } else if (type === Clutter.EventType.BUTTON_RELEASE) {
+                console.log(`[jinni-drag] release during threshold-watch, no drag started`);
                 this._disconnectDragThreshold();
             }
         });
@@ -689,8 +696,10 @@ export default class JinniExtension extends Extension {
     // where it would land; nothing about the task order or persisted
     // storage changes until _endDrag() commits it on release.
     _beginDrag(task) {
+        console.log(`[jinni-drag] _beginDrag called for "${task.getText()}"`);
         let container = task.getContainer();
         if (!container || !container.get_stage()) {
+            console.log(`[jinni-drag] _beginDrag: container missing/not on stage, aborting`);
             return;
         }
 
@@ -724,13 +733,16 @@ export default class JinniExtension extends Extension {
 
     _onDragEvent(actor, event) {
         let type = event.type();
+        console.log(`[jinni-drag] _onDragEvent: type=${type}`);
         if (type === Clutter.EventType.MOTION) {
             this._updateDragIndicator();
             return Clutter.EVENT_STOP;
         } else if (type === Clutter.EventType.BUTTON_RELEASE) {
+            console.log(`[jinni-drag] _onDragEvent: release, ending drag with commit`);
             this._endDrag(true);
             return Clutter.EVENT_STOP;
         } else if (type === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
+            console.log(`[jinni-drag] _onDragEvent: escape, cancelling drag`);
             this._endDrag(false);
             return Clutter.EVENT_STOP;
         }
@@ -768,6 +780,7 @@ export default class JinniExtension extends Extension {
     // Finish a drag: commit the reorder (and save) if shouldCommit is true,
     // otherwise just clean up and leave everything where it started.
     _endDrag(shouldCommit) {
+        console.log(`[jinni-drag] _endDrag called, shouldCommit=${shouldCommit}, draggedTask=${!!this._draggedTask}`);
         if (!this._draggedTask) {
             return;
         }
