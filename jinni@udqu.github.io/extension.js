@@ -12,7 +12,6 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 // Popup Preview Window Class
 class TaskPreview {
     constructor(isEnabled, maxWidth, hoverTime) {
-        // Settings variables
         this.isEnabled = isEnabled;
         this.maxWidth = maxWidth;
         this.hoverTime = hoverTime;
@@ -32,42 +31,35 @@ class TaskPreview {
             width: maxWidth,
         });
 
-        // Access the Clutter.Text object and set the wrapping properties
         let clutterText = this._popupLabel.clutter_text;
-        clutterText.set_line_wrap(true); // Enable text wrapping
-        clutterText.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR); // Wrap on word boundaries or characters
+        clutterText.set_line_wrap(true);
+        clutterText.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR);
 
         this._popup.add_child(this._popupLabel);
         Main.layoutManager.addChrome(this._popup);
     }
 
     show(text, relativeTo) {
-        // Check if preview enabled
         if (!this.isEnabled) { return; }
 
-        // If the preview enabled then proceed
         this._popupLabel.set_text(text);
         this._popup.show();
 
-        // Get the label style padding
         let padding = this._popupLabel.get_theme_node().get_padding(St.Side.ALL);
         let popupWidth = this.maxWidth + 2 * padding;
 
-        // Calculate and set the size of the popup based on content or fixed size
         let [minWidth, minHeight, natWidth, natHeight] = this._popupLabel.get_preferred_size();
         this._popup.set_size(popupWidth, natHeight);
 
-        // Position the popup window
+        // Position it to the left of the task, matching how the preview
+        // reads relative to the panel's top-bar layout
         let [posX, posY] = relativeTo.get_transformed_position();
         let [containerWidth, containerHeight] = relativeTo.get_transformed_size();
         this._popup.set_position(posX - popupWidth - 10, posY);
     }
 
     hide() {
-        // Check if preview enabled
         if (!this.isEnabled) { return; }
-
-        // If the preview enabled then proceed
         this._popup.hide();
     }
 
@@ -91,53 +83,43 @@ class TaskPreview {
 // TaskContainer class to handle task items
 class TaskContainer {
     constructor(text, onDelete, onClick, taskPreview) {
-        // Create a layout for the task container
         this.container = new St.BoxLayout({ vertical: false, style_class: 'task-container', reactive: true });
 
-        // Create a label for the entered text and add to the list
         this.textLabel = new St.Label({
             text: text,
             y_align: Clutter.ActorAlign.CENTER,
             style_class: 'counter-list-item',
-            x_expand: true  // Make the label expand to fill the available space
+            x_expand: true
         });
 
-        // Create a delete button
         this.deleteButton = new St.Button({
             label: '✔ | ✖',
             style_class: 'delete-button',
-            visible: false // Set initial visibility to false
+            visible: false
         });
 
-        // Externally defined methods
         this._onDelete = onDelete;
         this._onClick = onClick;
-        // Track click count for single/double click detection
         this._clickCount = 0;
         this._clickResetTimeoutId = null;
-        // Task preview related members
         this._hoverTimeoutId = null;
         this._taskPreview = taskPreview;
-        // Whether this task is currently considered hovered. Driven by the
-        // extension's list-wide motion tracking rather than this task's own
-        // enter/leave-event -- see updateHoverState() for why.
+        // Set from outside via updateHoverState(), not this task's own
+        // enter/leave-event -- see that method for why.
         this._isHovered = false;
-        // Poll timer used to detect a press-and-drag gesture starting on
-        // this task; see _trackDragThreshold().
         this._dragThresholdPollId = null;
 
         // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
             if (event.get_button() === Clutter.BUTTON_PRIMARY && this._isMouseWithinActor(this.textLabel, event)) {
                 this._clickCount++;
-                // Handle multiple click types
                 if (this._clickCount === 1) {
                     this._onClick('single', this);
                 } else if (this._clickCount === 2) {
                     this._onClick('double', this);
                 }
-                // Reset click count after the desktop's configured
-                // double-click time, cancelling any previous pending reset
+                // Use the desktop's configured double-click time, not a
+                // hardcoded value; cancel any previous pending reset
                 if (this._clickResetTimeoutId !== null) {
                     GLib.Source.remove(this._clickResetTimeoutId);
                 }
@@ -148,31 +130,26 @@ class TaskContainer {
                     return GLib.SOURCE_REMOVE;
                 });
 
-                // Independently of the click/double-click handling above,
-                // watch this same press for turning into a drag.
+                // This same press might also turn into a drag
                 this._trackDragThreshold(event);
             }
         });
 
-        // Connect delete button click event
         this._deleteButtonClickedEventId = this.deleteButton.connect('clicked', () => {
             if (this._onDelete) {
                 this._onDelete(this);
             }
         });
 
-        // Add label and delete button to the task container
         this.container.add_child(this.textLabel);
         this.container.add_child(this.deleteButton);
     }
 
-    // Whether the given stage-space point falls within this task's
-    // container -- used by the extension's list-wide motion tracking (see
-    // JinniExtension._onListBoxMotionEvent) to decide this task's hover
-    // state. Checking the container's own bounds (rather than e.g. just
-    // the label) means hovering the delete button itself -- a child fully
-    // inside those bounds -- still counts as "within", so the button
-    // doesn't flicker away right as it's about to be clicked.
+    // Whether the given stage-space point falls within this task's row.
+    // Used by the extension's list-wide motion tracking. Checking the
+    // container (not just the label) means hovering the delete button
+    // itself still counts as "within", so it doesn't flicker away right
+    // as it's about to be clicked.
     isPointAt(x, y) {
         if (!this.container || !this.container.get_stage()) {
             return false;
@@ -182,16 +159,12 @@ class TaskContainer {
         return x >= x1 && x <= x1 + width && y >= y1 && y <= y1 + height;
     }
 
-    // Apply a hover-state change: show/hide the delete button and start or
-    // cancel the preview timer accordingly. Driven externally (by the
-    // extension's list-wide motion/leave tracking) rather than from this
-    // task's own enter/leave-event, because Clutter's per-actor crossing
-    // detection can skip firing leave-event for a row swept past quickly --
-    // it only compares "last actor under pointer" to "current actor under
-    // pointer" per input sample, so a row that's never sampled as "current"
-    // during a fast sweep gets neither an enter nor a leave, and its state
-    // would otherwise never get corrected. Motion events on the whole list
-    // don't have that failure mode.
+    // Show/hide the delete button and start/cancel the preview timer.
+    // Driven externally by the extension's list-wide motion tracking
+    // rather than this task's own enter/leave-event, because Clutter can
+    // skip firing leave-event for a row swept past quickly during fast
+    // hovering, permanently sticking its state -- motion events over the
+    // whole list don't have that failure mode.
     updateHoverState(isHovered) {
         if (isHovered === this._isHovered) {
             return;
@@ -221,35 +194,27 @@ class TaskContainer {
         }
     }
 
-    // Force hover state to false regardless of the current value. Needed
-    // when the task is pulled out of the list for editing: it stops
-    // participating in list-wide motion tracking at that point, so nothing
-    // else would otherwise clear a delete-button-visible or preview-pending
-    // state left over from the hover that started the edit.
+    // Forces the delete button/preview to clear even if already "not
+    // hovered" -- needed when the task is pulled out of the list for
+    // editing, since it stops participating in hover tracking at that
+    // point and nothing else would reset it.
     resetHoverState() {
-        this._isHovered = true; // force updateHoverState(false) to act
+        this._isHovered = true;
         this.updateHoverState(false);
     }
 
-    // Watch for the press that just landed on this task turning into a
-    // drag: if the pointer moves past the desktop's configured drag
-    // threshold before the button is released, notify onClick('dragstart')
-    // so the extension can take over. Polls global.get_pointer() on a timer
-    // rather than relying on motion-event/button-release-event delivery,
-    // which can be buffered/delayed while a button is held down in some
-    // environments (confirmed via testing: motion during a held-down drag
-    // arrived, if at all, only in a delayed burst after later, unrelated
-    // discrete clicks). Polling the live pointer/button state sidesteps
-    // that entirely. Self-contained to this task -- once a drag actually
-    // starts, all further handling for it lives in the extension.
+    // Detects this task's press turning into a drag: past the desktop's
+    // configured drag threshold, notify onClick('dragstart') so the
+    // extension can take over. Polls global.get_pointer() rather than
+    // motion-event/button-release-event, since testing showed those get
+    // buffered/delayed while a button is held down in this environment.
     _trackDragThreshold(pressEvent) {
         let [startX, startY] = pressEvent.get_coords();
         let threshold = Clutter.Settings.get_default().dnd_drag_threshold;
         this._dragThresholdPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
             let [x, y, mods] = global.get_pointer();
             if (!(mods & Clutter.ModifierType.BUTTON1_MASK)) {
-                // Button released before the threshold was exceeded -- just
-                // a click, not a drag.
+                // Released before the threshold -- just a click
                 this._dragThresholdPollId = null;
                 return GLib.SOURCE_REMOVE;
             }
@@ -271,7 +236,6 @@ class TaskContainer {
         }
     }
 
-    // Function to check if the mouse is within the boundaries of an actor
     _isMouseWithinActor(actor, event) {
         let [x, y] = event.get_coords();
         let [x1, y1] = actor.get_transformed_position();
@@ -354,17 +318,14 @@ export default class JinniExtension extends Extension {
         this._hoverTimeChangedHandler = null;
         this._entry = null;
         this._listBox = null;
-        // Not manually disconnected in disable(): _listBox is destroyed as
-        // part of this._indicator.destroy(), which cleans up its own signal
-        // connections. Kept only for consistency/clarity of ownership.
+        // Destroyed (and disconnected) as part of this._indicator.destroy()
         this._listBoxMotionHandler = null;
         this._listBoxLeaveHandler = null;
         this._counter = 0;
         this._taskPreview = null;
         this._tasksFilePath = null;
-        // Ordered list of live TaskContainer instances, kept in sync with
-        // _listBox's children. This is the source of truth for persistence,
-        // rather than introspecting _listBox's DOM structure.
+        // Source of truth for task order/persistence, rather than
+        // introspecting _listBox's DOM structure
         this._tasks = [];
         // current edit variables
         this._currentEntry = null;
@@ -382,12 +343,10 @@ export default class JinniExtension extends Extension {
     enable() {
         this._tasksFilePath = `${GLib.get_home_dir()}/.local/share/gnome-shell/extensions/${this.uuid}/savedTasks.json`;
 
-        // Load the CSS file
         this._loadStylesheet();
 
-        // Retrieve settings. getSettings() throws (rather than returning a
-        // falsy value) if the compiled schema can't be found, so guard the
-        // fetch itself instead of checking the result afterwards.
+        // getSettings() throws (rather than returning falsy) if the
+        // compiled schema can't be found
         try {
             this._settings = this.getSettings();
         } catch (error) {
@@ -395,102 +354,74 @@ export default class JinniExtension extends Extension {
             return;
         }
 
-        // Create a new panel indicator
         this._indicator = new PanelMenu.Button(0.0, "Counter Indicator", false);
-
-        // Add CSS class to the indicator for custom styling
         this._indicator.add_style_class_name('counter-indicator');
 
-        // Create a label for displaying the counter value
         this._label = new St.Label({
             text: `${this._counter}`,
             y_align: Clutter.ActorAlign.CENTER,
         });
-
-        // Add CSS class to the label for custom styling
         this._label.add_style_class_name('counter-label');
-
-        // Add the label to the indicator
         this._indicator.add_child(this._label);
 
-        // Create the text box (entry)
         this._entry = new St.Entry({
             can_focus: true,
             hint_text: "Type your task here and hit enter",
             style_class: 'counter-entry'
         });
-
-        // Connect the button press event to focus on the text entry box
         this._entry.clutter_text.connect('button_press_event', this._onEntryClicked.bind(this));
-
-        // Connect the key press event
         this._entry.clutter_text.connect('activate', this._onTextEntered.bind(this));
 
-        // Create a box to hold the list of recorded texts
         this._listBox = new St.BoxLayout({
             vertical: true,
             style_class: 'counter-list',
             reactive: true
         });
 
-        // Track hover state for all tasks from motion events on the whole
-        // list, rather than each task's own enter/leave-event -- see
-        // TaskContainer.updateHoverState() for why that's needed.
+        // Drives hover state for all tasks -- see TaskContainer.updateHoverState()
         this._listBoxMotionHandler = this._listBox.connect('motion-event', this._onListBoxMotionEvent.bind(this));
         this._listBoxLeaveHandler = this._listBox.connect('leave-event', this._onListBoxLeaveEvent.bind(this));
 
-        // Create a container for the text box and list inside a PopupMenu.PopupMenuSection
         let container = new PopupMenu.PopupMenuSection();
         container.actor.add_child(this._entry);
         container.actor.add_child(this._listBox);
-
-        // Add the container to the indicator's menu
         this._indicator.menu.addMenuItem(container);
 
         // Force-cancel an in-progress drag if the menu closes for any
-        // reason (clicking elsewhere, re-clicking the indicator, etc.) --
-        // without this, a drag that doesn't end via its own button-release
-        // would leave a stage-level listener dangling.
+        // reason, so no stage-level listener is left dangling
         this._menuOpenStateHandler = this._indicator.menu.connect('open-state-changed', (menu, isOpen) => {
             if (!isOpen && this._draggedTask) {
                 this._endDrag(false);
             }
         });
 
-        // Add the indicator to the status area (panel)
         Main.panel.addToStatusArea('counter-indicator', this._indicator);
 
-        // Connect to the settings change signal
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
-        this._updateWidth();  // Initialize with current value
+        this._updateWidth();
 
         // Clear the saved-tasks file the moment persistence is turned off,
-        // rather than leaving stale data on disk until the next enable()
+        // rather than on the next enable()
         this._persistTasksChangedHandler = this._settings.connect('changed::persist-tasks', () => {
             if (!this._settings.get_boolean('persist-tasks')) {
                 this._clearTasksFile();
             }
         });
 
-        // Set the task preview object
         this._taskPreview = new TaskPreview(this._settings.get_boolean('enable-previews'), this._settings.get_int('max-preview-size'), this._settings.get_int('hover-time'));
         this._enablePreviewsChangedHandler = this._settings.connect('changed::enable-previews', this._updateTaskPreviewSettings.bind(this));
         this._maxPreviewSizeChangedHandler = this._settings.connect('changed::max-preview-size', this._updateTaskPreviewSettings.bind(this));
         this._hoverTimeChangedHandler = this._settings.connect('changed::hover-time', this._updateTaskPreviewSettings.bind(this));
         this._updateTaskPreviewSettings();
 
-        // Connect the button press event to focus on the text entry box
         this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
 
-        // Load tasks from the file
         this._loadTasks();
     }
 
     disable() {
-        // Cancel any in-progress drag first: it holds a stage-level
-        // listener and a reference to the dragged task's container, both
-        // of which need cleaning up before those actors get torn down
-        // below.
+        // Holds a stage-level listener and a container reference, so clean
+        // it up before those actors get torn down below
         if (this._draggedTask) {
             this._endDrag(false);
         }
@@ -543,12 +474,12 @@ export default class JinniExtension extends Extension {
         this._currentIndex = null;
         this._tasksFilePath = null;
         this._tasks = [];
+        this._counter = 0;
     }
 
     _updateWidth() {
         let taskListWindowWidth = this._settings.get_int('tasklist-window-width');
         if (taskListWindowWidth) {
-            // Set the width of the task list window
             this._indicator.menu.actor.width = taskListWindowWidth;
         } else {
             console.error('Invalid tasklist-window-width setting.');
@@ -564,21 +495,16 @@ export default class JinniExtension extends Extension {
 
     _loadStylesheet() {
         try {
-            // Ensure the stylesheet is loaded
             let themeContext = St.ThemeContext.get_for_stage(global.stage);
             let stylesheet = Gio.File.new_for_path(`${this.path}/stylesheet.css`);
-
-            // Add the stylesheet to the theme context
             themeContext.get_theme().load_stylesheet(stylesheet);
         } catch (error) {
             console.error(`Failed to load stylesheet: ${error.message}`);
         }
     }
 
-    // Recompute every task's hover state from the pointer's current
-    // position on each motion sample over the list. See
-    // TaskContainer.updateHoverState() for why this lives here rather than
-    // on each task's own enter/leave-event.
+    // See TaskContainer.updateHoverState() for why this lives here rather
+    // than on each task's own enter/leave-event.
     _onListBoxMotionEvent(actor, event) {
         let [x, y] = event.get_coords();
         this._tasks.forEach(task => task.updateHoverState(task.isPointAt(x, y)));
@@ -589,22 +515,16 @@ export default class JinniExtension extends Extension {
     }
 
     _onIndicatorClicked(actor, event) {
-        // Check if the click event is a left-click (button 1)
         if (event.get_button() === Clutter.BUTTON_PRIMARY) {
-            // Focus on the text entry box
             this._entry.grab_key_focus();
         }
     }
 
     _onEntryClicked(actor, event) {
-        // Check if the click event is a left-click (button 1)
         if (event.get_button() === Clutter.BUTTON_PRIMARY) {
-            // Check if there's already an entry being edited
             if (this._currentEntry) {
                 this._saveCurrentEntry();
             }
-
-            // Focus on the text entry box
             this._entry.grab_key_focus();
         }
     }
@@ -612,27 +532,20 @@ export default class JinniExtension extends Extension {
     _onTextEntered() {
         let text = this._entry.get_text().trim();
         if (text !== "") {
-            // Create a task
             let task = new TaskContainer(text, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
-
-            // Add the task container to the list
             this._listBox.add_child(task.getContainer());
             this._tasks.push(task);
 
-            // Clear the entry text
             this._entry.set_text("");
 
-            // Increment the counter and update the label
             this._counter++;
             this._label.set_text(`${this._counter}`);
 
-            // Save tasks to persistent storage
             this._saveTasks();
         }
     }
 
     _onTaskClicked(clickType, task) {
-        // Handle various click types differently
         if (clickType === 'single') {
             if (this._currentEntry) {
                 this._saveCurrentEntry();
@@ -645,81 +558,66 @@ export default class JinniExtension extends Extension {
     }
 
     _editTask(task) {
-        // Check if there's already an entry being edited
         if (this._currentEntry) {
             this._saveCurrentEntry();
         }
 
-        // Get the index of the current label
         let index = this._listBox.get_children().indexOf(task.getContainer());
         let label = task.getText();
 
-        // On double-click, replace the label with an entry
+        // The row and the edit entry have different CSS padding/borders,
+        // so swapping between them would shift every row below -- pin the
+        // entry to the row's actual measured height to avoid that.
+        let rowHeight = task.getContainer().height;
+
         let entry = new St.Entry({
             can_focus: true,
             text: label,
-            style_class: 'counter-entry'
+            style_class: 'counter-entry',
+            height: rowHeight
         });
 
-        // Replace task with entry
         this._listBox.remove_child(task.getContainer());
         this._listBox.insert_child_at_index(entry, index);
 
-        // The task stops receiving enter/leave events while detached from
-        // the list, so explicitly clear any hover-triggered visual state
-        // (e.g. a delete button left visible from the hover that started
-        // this edit) rather than leaving it stuck until an unrelated future
-        // hover happens to reset it.
+        // Stops receiving hover events while detached from the list, so
+        // clear any hover-triggered state (e.g. a stuck delete button)
         task.resetHoverState();
 
-        // Store the current entry and corresponding label
         this._currentEntry = entry;
         this._currentTask  = task;
         this._currentIndex = index;
 
-        // Connect activation event to save changes
         entry.clutter_text.connect('activate', () => {
             this._saveCurrentEntry();
         });
 
-        // Listen for global pointer events to detect focus loss
         this._entryFocusOutHandlerId = global.stage.connect('captured-event', this._handleFocusLoss.bind(this));
 
-        // Highlight the entry being edited
         entry.add_style_class_name('editing-entry');
-
-        // Focus entry
         entry.grab_key_focus();
         entry.clutter_text.set_selection(0, -1);
     }
 
-    // Begin dragging a task to reorder it. The dragged row stays in place,
-    // dimmed, while a drop-line indicator moves within the list to show
-    // where it would land; nothing about the task order or persisted
-    // storage changes until _endDrag() commits it on release.
+    // Begin dragging a task to reorder it. The row stays in place, dimmed,
+    // while a drop-line indicator moves within the list to show where it
+    // would land; nothing changes or gets saved until _endDrag() commits
+    // it on release.
     _beginDrag(task) {
         let container = task.getContainer();
         if (!container || !container.get_stage()) {
             return;
         }
 
-        // Guard against re-entry: if a drag is somehow already in progress
-        // (e.g. a stray dragstart notification arriving twice), cleanly end
-        // it first rather than overwriting _draggedTask/_dragIndicator and
-        // leaking the previous drag's indicator actor and dimmed opacity.
+        // Guard against re-entry, e.g. a stray dragstart arriving twice
         if (this._draggedTask) {
             this._endDrag(false);
         }
 
-        // Committing any pending edit first keeps this consistent with how
-        // every other interaction here (single-click, double-click) treats
-        // a task mid-edit.
         if (this._currentEntry) {
             this._saveCurrentEntry();
         }
 
-        // Clears the delete button / cancels any pending preview for the
-        // row now that it's being picked up rather than merely hovered.
         task.updateHoverState(false);
 
         this._draggedTask = task;
@@ -727,9 +625,8 @@ export default class JinniExtension extends Extension {
 
         this._dragIndicator = new St.Widget({ style_class: 'task-drop-indicator', x_expand: true });
 
-        // Escape-to-cancel is still event-driven (key events aren't part of
-        // the "continuous input while a button is held" class of events
-        // this environment buffers/delays -- see _trackDragThreshold()).
+        // Escape-to-cancel stays event-driven -- key events aren't part of
+        // the held-button input class that gets delayed in this environment
         this._dragMotionHandler = global.stage.connect('captured-event', (actor, event) => {
             if (event.type() === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
                 this._endDrag(false);
@@ -738,10 +635,8 @@ export default class JinniExtension extends Extension {
             return Clutter.EVENT_PROPAGATE;
         });
 
-        // The rest of the drag (indicator position, detecting the drop) is
-        // driven by polling the live pointer/button state rather than
-        // motion-event/button-release-event, for the same reason as
-        // TaskContainer._trackDragThreshold().
+        // Indicator position and drop detection are polled for the same
+        // reason as TaskContainer._trackDragThreshold()
         this._dragPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
             let [, , mods] = global.get_pointer();
             if (!(mods & Clutter.ModifierType.BUTTON1_MASK)) {
@@ -756,10 +651,8 @@ export default class JinniExtension extends Extension {
         this._updateDragIndicator();
     }
 
-    // Move the drop indicator to sit at the position a drop would currently
-    // land at. Always removes it first so _computeDropIndex() measures the
-    // list's real task positions rather than ones already skewed by the
-    // indicator occupying a slot.
+    // Removes the indicator first so _computeDropIndex() measures real
+    // task positions, not ones skewed by the indicator's own slot.
     _updateDragIndicator() {
         if (this._dragIndicator.get_parent() === this._listBox) {
             this._listBox.remove_child(this._dragIndicator);
@@ -770,8 +663,7 @@ export default class JinniExtension extends Extension {
     }
 
     // Index (0..this._tasks.length) of the task the given stage-space y
-    // coordinate falls before, comparing against each task's current
-    // on-screen midpoint. this._tasks.length itself means "at the end".
+    // falls before; this._tasks.length itself means "at the end".
     _computeDropIndex(pointerY) {
         for (let i = 0; i < this._tasks.length; i++) {
             let taskContainer = this._tasks[i].getContainer();
@@ -784,8 +676,8 @@ export default class JinniExtension extends Extension {
         return this._tasks.length;
     }
 
-    // Finish a drag: commit the reorder (and save) if shouldCommit is true,
-    // otherwise just clean up and leave everything where it started.
+    // Commits the reorder (and saves) if shouldCommit is true, otherwise
+    // just cleans up and leaves everything where it started.
     _endDrag(shouldCommit) {
         if (!this._draggedTask) {
             return;
@@ -824,9 +716,8 @@ export default class JinniExtension extends Extension {
 
         if (dropIndex !== null) {
             let oldIndex = this._tasks.indexOf(task);
-            // dropIndex was computed with the dragged task still occupying
-            // oldIndex, so removing it first shifts everything after
-            // oldIndex left by one -- adjust the target index to match.
+            // dropIndex assumed the dragged task still occupied oldIndex,
+            // so removing it first shifts later indices down by one
             let adjustedIndex = dropIndex > oldIndex ? dropIndex - 1 : dropIndex;
             if (oldIndex !== -1 && adjustedIndex !== oldIndex) {
                 this._tasks.splice(oldIndex, 1);
@@ -841,34 +732,27 @@ export default class JinniExtension extends Extension {
     }
 
     _deleteTask(task) {
-        // Remove the task from our tracked list
         let index = this._tasks.indexOf(task);
         if (index !== -1) {
             this._tasks.splice(index, 1);
         }
 
-        // Destroy the task through its own destroy(), not by reaching into
-        // getContainer().destroy() directly -- that bypasses signal
-        // disconnection and pending-timeout/idle cleanup, and destroys the
-        // delete button synchronously while it's still inside its own
-        // 'clicked' handler (which is exactly what the deferred idle_add
-        // destruction in TaskContainer.destroy() exists to avoid).
+        // task.destroy(), not getContainer().destroy() directly -- the
+        // latter skips signal/timer cleanup and destroys the delete button
+        // synchronously from inside its own 'clicked' handler.
         task.destroy();
 
-        // Decrement the counter and update the label
         this._counter--;
         this._label.set_text(`${this._counter}`);
 
-        // Save tasks to persistent storage
         this._saveTasks();
     }
 
     _handleFocusLoss(actor, event) {
         if (event.type() === Clutter.EventType.BUTTON_PRESS) {
-            // get_source() can be null for a press that doesn't resolve to
-            // any actor (e.g. bare stage background); Clutter.Actor.contains()
-            // rejects a null argument, so treat that case as "outside" the
-            // entry being edited rather than calling it with target unchecked.
+            // get_source() can be null (e.g. a press on bare stage
+            // background); treat that as "outside" the entry rather than
+            // passing it to contains(), which rejects null.
             let target = event.get_source();
             let clickedInsideEntry = target !== null &&
                 (target === this._currentEntry || this._currentEntry.contains(target));
@@ -883,49 +767,38 @@ export default class JinniExtension extends Extension {
 
         let newText = this._currentEntry.get_text().trim();
         if (newText !== "") {
-            // Update label text with new text
             this._currentTask.setText(newText);
         }
 
-        // Remove the editing style class (if necessary)
         this._currentEntry.remove_style_class_name('editing-entry');
-
-        // Remove entry and add label back to the list at the same index
         this._listBox.remove_child(this._currentEntry);
         this._listBox.insert_child_at_index(this._currentTask.getContainer(), this._currentIndex);
 
-        // Disconnect the event listener for focus loss
         if (this._entryFocusOutHandlerId) {
             global.stage.disconnect(this._entryFocusOutHandlerId);
             this._entryFocusOutHandlerId = null;
         }
 
-        // Clear the current entry and label references
         this._currentEntry = null;
         this._currentTask  = null;
         this._currentIndex = null;
 
-        // Save tasks to persistent storage
         this._saveTasks();
     }
 
     _saveTasks() {
-        // Check if the persist-tasks setting is enabled
         if (!this._settings.get_boolean('persist-tasks')) {
             return;
         }
 
-        // Get the task texts straight from the tracked TaskContainer list.
         // A task currently being edited still reports its last-committed
-        // text via getText(), so it's saved (not silently dropped) if a
-        // save happens to run mid-edit.
+        // text via getText(), so it's saved rather than dropped if this
+        // runs mid-edit.
         let tasks = this._tasks.map(task => task.getText()).filter(text => text !== '');
 
-        // Attempt to save the texts for tasks, log error message if it fails
         try {
             let file = Gio.File.new_for_path(this._tasksFilePath);
 
-            // Ensure the extension's data directory exists before writing to it
             let parentDir = file.get_parent();
             if (parentDir && !parentDir.query_exists(null)) {
                 parentDir.make_directory_with_parents(null);
@@ -944,9 +817,10 @@ export default class JinniExtension extends Extension {
     }
 
     _loadTasks() {
-        // Check if the persist-tasks setting is enabled
         if (!this._settings.get_boolean('persist-tasks')) {
             this._clearTasksFile();
+            this._counter = 0;
+            this._label.set_text(`${this._counter}`);
             return;
         }
 
