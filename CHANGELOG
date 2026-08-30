@@ -92,3 +92,17 @@
     * an in-progress drag is force-cancelled (with nothing reordered or
       saved) if the popup menu closes for any reason mid-drag, or the
       extension is disabled, so no stray listener or timer is left running
+0.3.1
+    * fix the indicator's task counter surviving a disable/enable cycle with
+      persistence off: it's a plain instance field that isn't re-created on
+      a toggle, and neither disable() nor _loadTasks()'s persist-off branch
+      reset it, so the label kept showing the old count against an emptied
+      list
+    * fix the task list shifting when entering edit mode: the row and the
+      edit entry don't naturally compute to the same height from their CSS,
+      so swapping between them moved every row below by the difference; the
+      entry is now pinned to the row's actual measured height
+    * soften the drag-and-drop drop indicator from a fully-opaque accent
+      blue to a translucent one, to feel more consistent with how that same
+      color is used as a subtle border elsewhere (the editing-box highlight)
+    * trim comment density throughout extension.js (no functional changes)
