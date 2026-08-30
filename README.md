@@ -16,12 +16,11 @@ GNOME Shell 45 or later.
 
 ## Installation
 
-Install from [extensions.gnome.org](https://extensions.gnome.org/) (search "Jinni"), or manually:
+Install from [extensions.gnome.org](https://extensions.gnome.org/) (search "Jinni"), or manually from a clone of this repo (run from the repo root, not from inside `jinni@udqu.github.io/`):
 
 ```bash
-cd jinni@udqu.github.io
-gnome-extensions pack --out-dir=/tmp .
-gnome-extensions install /tmp/jinni@udqu.github.io.shell-extension.zip
+gnome-extensions pack jinni@udqu.github.io
+gnome-extensions install jinni@udqu.github.io.shell-extension.zip
 ```
 
 Then log out and back in, and enable it in the Extensions app (or `gnome-extensions enable jinni@udqu.github.io`).
