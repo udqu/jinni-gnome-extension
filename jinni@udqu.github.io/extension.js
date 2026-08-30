@@ -112,6 +112,9 @@ class TaskContainer {
         // Externally defined methods
         this._onDelete = onDelete;
         this._onClick = onClick;
+        // Track click count for single/double click detection
+        this._clickCount = 0;
+        this._clickResetTimeoutId = null;
         // Task preview related members
         this._hoverTimeoutId = null;
         this._taskPreview = taskPreview;
@@ -121,17 +124,27 @@ class TaskContainer {
         this._showDeleteIdleId = null;
         this._hideDeleteIdleId = null;
 
-        // Connect button_press_event to handle single and double clicks.
-        // Clutter tracks click_count itself (honoring the desktop's configured
-        // double-click time/distance), so there's no need to hand-roll it.
+        // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
             if (event.get_button() === Clutter.BUTTON_PRIMARY && this._isMouseWithinActor(this.textLabel, event)) {
-                let clickCount = event.get_click_count();
-                if (clickCount === 1) {
+                this._clickCount++;
+                // Handle multiple click types
+                if (this._clickCount === 1) {
                     this._onClick('single', this);
-                } else if (clickCount === 2) {
+                } else if (this._clickCount === 2) {
                     this._onClick('double', this);
                 }
+                // Reset click count after the desktop's configured
+                // double-click time, cancelling any previous pending reset
+                if (this._clickResetTimeoutId !== null) {
+                    GLib.Source.remove(this._clickResetTimeoutId);
+                }
+                let doubleClickTime = Clutter.Settings.get_default().double_click_time;
+                this._clickResetTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, doubleClickTime, () => {
+                    this._clickCount = 0;
+                    this._clickResetTimeoutId = null;
+                    return GLib.SOURCE_REMOVE;
+                });
             }
         });
 
@@ -256,6 +269,10 @@ class TaskContainer {
         if (this._hoverTimeoutId !== null) {
             GLib.Source.remove(this._hoverTimeoutId);
             this._hoverTimeoutId = null;
+        }
+        if (this._clickResetTimeoutId !== null) {
+            GLib.Source.remove(this._clickResetTimeoutId);
+            this._clickResetTimeoutId = null;
         }
         if (this._showDeleteIdleId !== null) {
             GLib.Source.remove(this._showDeleteIdleId);
