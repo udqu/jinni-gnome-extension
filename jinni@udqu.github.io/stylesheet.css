@@ -58,3 +58,9 @@
     font-size: 14px;
     white-space: normal;  /* Ensure normal white-space to allow wrapping */
 }
+
+.task-drop-indicator {
+    height: 2px;
+    background-color: #007acc;
+    margin: 4px 0;
+}

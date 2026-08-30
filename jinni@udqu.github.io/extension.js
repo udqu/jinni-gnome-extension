@@ -122,6 +122,9 @@ class TaskContainer {
         // extension's list-wide motion tracking rather than this task's own
         // enter/leave-event -- see updateHoverState() for why.
         this._isHovered = false;
+        // Stage-level listener used to detect a press-and-drag gesture
+        // starting on this task; see _trackDragThreshold().
+        this._dragThresholdHandlerId = null;
 
         // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
@@ -144,6 +147,10 @@ class TaskContainer {
                     this._clickResetTimeoutId = null;
                     return GLib.SOURCE_REMOVE;
                 });
+
+                // Independently of the click/double-click handling above,
+                // watch this same press for turning into a drag.
+                this._trackDragThreshold(event);
             }
         });
 
@@ -224,6 +231,38 @@ class TaskContainer {
         this.updateHoverState(false);
     }
 
+    // Watch the stage for the press that just landed on this task turning
+    // into a drag: if the pointer moves past the desktop's configured drag
+    // threshold before the button is released, notify onClick('dragstart')
+    // so the extension can take over. Self-contained to this task -- once
+    // a drag actually starts, all further motion/release handling for it
+    // lives in the extension, not here.
+    _trackDragThreshold(pressEvent) {
+        let [startX, startY] = pressEvent.get_coords();
+        let threshold = Clutter.Settings.get_default().dnd_drag_threshold;
+        this._dragThresholdHandlerId = global.stage.connect('captured-event', (actor, event) => {
+            let type = event.type();
+            if (type === Clutter.EventType.MOTION) {
+                let [x, y] = event.get_coords();
+                if (Math.hypot(x - startX, y - startY) >= threshold) {
+                    this._disconnectDragThreshold();
+                    if (this.container && this.container.get_stage()) {
+                        this._onClick('dragstart', this);
+                    }
+                }
+            } else if (type === Clutter.EventType.BUTTON_RELEASE) {
+                this._disconnectDragThreshold();
+            }
+        });
+    }
+
+    _disconnectDragThreshold() {
+        if (this._dragThresholdHandlerId !== null) {
+            global.stage.disconnect(this._dragThresholdHandlerId);
+            this._dragThresholdHandlerId = null;
+        }
+    }
+
     // Function to check if the mouse is within the boundaries of an actor
     _isMouseWithinActor(actor, event) {
         let [x, y] = event.get_coords();
@@ -290,6 +329,7 @@ class TaskContainer {
             GLib.Source.remove(this._clickResetTimeoutId);
             this._clickResetTimeoutId = null;
         }
+        this._disconnectDragThreshold();
     }
 }
 
@@ -323,6 +363,11 @@ export default class JinniExtension extends Extension {
         this._currentTask = null;
         this._currentIndex = null;
         this._entryFocusOutHandlerId = null;
+        // drag-and-drop reordering state
+        this._menuOpenStateHandler = null;
+        this._draggedTask = null;
+        this._dragIndicator = null;
+        this._dragMotionHandler = null;
     }
 
     enable() {
@@ -393,6 +438,16 @@ export default class JinniExtension extends Extension {
         // Add the container to the indicator's menu
         this._indicator.menu.addMenuItem(container);
 
+        // Force-cancel an in-progress drag if the menu closes for any
+        // reason (clicking elsewhere, re-clicking the indicator, etc.) --
+        // without this, a drag that doesn't end via its own button-release
+        // would leave a stage-level listener dangling.
+        this._menuOpenStateHandler = this._indicator.menu.connect('open-state-changed', (menu, isOpen) => {
+            if (!isOpen && this._draggedTask) {
+                this._endDrag(false);
+            }
+        });
+
         // Add the indicator to the status area (panel)
         Main.panel.addToStatusArea('counter-indicator', this._indicator);
 
@@ -423,7 +478,18 @@ export default class JinniExtension extends Extension {
     }
 
     disable() {
+        // Cancel any in-progress drag first: it holds a stage-level
+        // listener and a reference to the dragged task's container, both
+        // of which need cleaning up before those actors get torn down
+        // below.
+        if (this._draggedTask) {
+            this._endDrag(false);
+        }
         if (this._indicator !== null) {
+            if (this._menuOpenStateHandler) {
+                this._indicator.menu.disconnect(this._menuOpenStateHandler);
+                this._menuOpenStateHandler = null;
+            }
             this._indicator.destroy();
             this._indicator = null;
         }
@@ -564,6 +630,8 @@ export default class JinniExtension extends Extension {
             }
         } else if (clickType === 'double') {
             this._editTask(task);
+        } else if (clickType === 'dragstart') {
+            this._beginDrag(task);
         }
     }
 
@@ -614,6 +682,131 @@ export default class JinniExtension extends Extension {
         // Focus entry
         entry.grab_key_focus();
         entry.clutter_text.set_selection(0, -1);
+    }
+
+    // Begin dragging a task to reorder it. The dragged row stays in place,
+    // dimmed, while a drop-line indicator moves within the list to show
+    // where it would land; nothing about the task order or persisted
+    // storage changes until _endDrag() commits it on release.
+    _beginDrag(task) {
+        let container = task.getContainer();
+        if (!container || !container.get_stage()) {
+            return;
+        }
+
+        // Committing any pending edit first keeps this consistent with how
+        // every other interaction here (single-click, double-click) treats
+        // a task mid-edit.
+        if (this._currentEntry) {
+            this._saveCurrentEntry();
+        }
+
+        // Clears the delete button / cancels any pending preview for the
+        // row now that it's being picked up rather than merely hovered.
+        task.updateHoverState(false);
+
+        this._draggedTask = task;
+        container.opacity = 128;
+
+        this._dragIndicator = new St.Widget({ style_class: 'task-drop-indicator', x_expand: true });
+        this._dragMotionHandler = global.stage.connect('captured-event', this._onDragEvent.bind(this));
+
+        this._updateDragIndicator();
+    }
+
+    _onDragEvent(actor, event) {
+        let type = event.type();
+        if (type === Clutter.EventType.MOTION) {
+            this._updateDragIndicator();
+            return Clutter.EVENT_STOP;
+        } else if (type === Clutter.EventType.BUTTON_RELEASE) {
+            this._endDrag(true);
+            return Clutter.EVENT_STOP;
+        } else if (type === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
+            this._endDrag(false);
+            return Clutter.EVENT_STOP;
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    // Move the drop indicator to sit at the position a drop would currently
+    // land at. Always removes it first so _computeDropIndex() measures the
+    // list's real task positions rather than ones already skewed by the
+    // indicator occupying a slot.
+    _updateDragIndicator() {
+        if (this._dragIndicator.get_parent() === this._listBox) {
+            this._listBox.remove_child(this._dragIndicator);
+        }
+        let [, y] = global.get_pointer();
+        let index = this._computeDropIndex(y);
+        this._listBox.insert_child_at_index(this._dragIndicator, index);
+    }
+
+    // Index (0..this._tasks.length) of the task the given stage-space y
+    // coordinate falls before, comparing against each task's current
+    // on-screen midpoint. this._tasks.length itself means "at the end".
+    _computeDropIndex(pointerY) {
+        for (let i = 0; i < this._tasks.length; i++) {
+            let taskContainer = this._tasks[i].getContainer();
+            let [, y1] = taskContainer.get_transformed_position();
+            let [, height] = taskContainer.get_transformed_size();
+            if (pointerY < y1 + height / 2) {
+                return i;
+            }
+        }
+        return this._tasks.length;
+    }
+
+    // Finish a drag: commit the reorder (and save) if shouldCommit is true,
+    // otherwise just clean up and leave everything where it started.
+    _endDrag(shouldCommit) {
+        if (!this._draggedTask) {
+            return;
+        }
+
+        let task = this._draggedTask;
+        this._draggedTask = null;
+
+        if (this._dragMotionHandler !== null) {
+            global.stage.disconnect(this._dragMotionHandler);
+            this._dragMotionHandler = null;
+        }
+
+        let dropIndex = null;
+        if (shouldCommit) {
+            let [, y] = global.get_pointer();
+            dropIndex = this._computeDropIndex(y);
+        }
+
+        if (this._dragIndicator) {
+            if (this._dragIndicator.get_parent()) {
+                this._listBox.remove_child(this._dragIndicator);
+            }
+            this._dragIndicator.destroy();
+            this._dragIndicator = null;
+        }
+
+        let container = task.getContainer();
+        if (container) {
+            container.opacity = 255;
+        }
+
+        if (dropIndex !== null) {
+            let oldIndex = this._tasks.indexOf(task);
+            // dropIndex was computed with the dragged task still occupying
+            // oldIndex, so removing it first shifts everything after
+            // oldIndex left by one -- adjust the target index to match.
+            let adjustedIndex = dropIndex > oldIndex ? dropIndex - 1 : dropIndex;
+            if (oldIndex !== -1 && adjustedIndex !== oldIndex) {
+                this._tasks.splice(oldIndex, 1);
+                this._tasks.splice(adjustedIndex, 0, task);
+
+                this._listBox.remove_child(container);
+                this._listBox.insert_child_at_index(container, adjustedIndex);
+
+                this._saveTasks();
+            }
+        }
     }
 
     _deleteTask(task) {
