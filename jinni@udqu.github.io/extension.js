@@ -568,9 +568,13 @@ export default class JinniExtension extends Extension {
             this._tasks.splice(index, 1);
         }
 
-        // Remove the task item from the list
-        // this._listBox.remove_child(task.getContainer());
-        task.getContainer().destroy();
+        // Destroy the task through its own destroy(), not by reaching into
+        // getContainer().destroy() directly -- that bypasses signal
+        // disconnection and pending-timeout/idle cleanup, and destroys the
+        // delete button synchronously while it's still inside its own
+        // 'clicked' handler (which is exactly what the deferred idle_add
+        // destruction in TaskContainer.destroy() exists to avoid).
+        task.destroy();
 
         // Decrement the counter and update the label
         this._counter--;
