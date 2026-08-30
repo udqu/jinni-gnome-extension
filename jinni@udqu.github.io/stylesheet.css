@@ -61,6 +61,6 @@
 
 .task-drop-indicator {
     height: 2px;
-    background-color: rgba(0, 122, 204, 0.25); /* same accent as .editing-entry's border, softened further */
+    background-color: rgba(255, 255, 255, 0.5); /* neutral highlight, not the editing accent color */
     margin: 4px 0;
 }
