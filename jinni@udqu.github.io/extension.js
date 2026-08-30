@@ -543,6 +543,7 @@ export default class JinniExtension extends Extension {
         this._currentIndex = null;
         this._tasksFilePath = null;
         this._tasks = [];
+        this._counter = 0;
     }
 
     _updateWidth() {
@@ -947,6 +948,12 @@ export default class JinniExtension extends Extension {
         // Check if the persist-tasks setting is enabled
         if (!this._settings.get_boolean('persist-tasks')) {
             this._clearTasksFile();
+            // Explicit rather than relying on disable() having already
+            // reset these: the task list is empty either way here, so the
+            // counter/label should read 0 regardless of what they were
+            // before this enable() cycle.
+            this._counter = 0;
+            this._label.set_text(`${this._counter}`);
             return;
         }
 
