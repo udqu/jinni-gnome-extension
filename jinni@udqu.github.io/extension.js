@@ -655,11 +655,20 @@ export default class JinniExtension extends Extension {
         let index = this._listBox.get_children().indexOf(task.getContainer());
         let label = task.getText();
 
+        // The task row and the edit entry have different CSS padding/
+        // borders, so they don't naturally come out to the same height --
+        // swapping between them would shift every row below up or down.
+        // Pin the entry to the row's actual current height (measured live,
+        // rather than trying to hand-tune CSS numbers to match) so nothing
+        // else in the list moves during an edit.
+        let rowHeight = task.getContainer().height;
+
         // On double-click, replace the label with an entry
         let entry = new St.Entry({
             can_focus: true,
             text: label,
-            style_class: 'counter-entry'
+            style_class: 'counter-entry',
+            height: rowHeight
         });
 
         // Replace task with entry
