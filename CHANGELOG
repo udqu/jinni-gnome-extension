@@ -78,3 +78,17 @@
       row swept past quickly, permanently sticking its delete button visible
     * clear savedTasks.json immediately when persist-tasks is turned off in
       prefs, instead of waiting for the next enable() (next logout/login)
+0.3.0
+    * add drag-and-drop task reordering: press and drag a task's text to move
+      it, with a drop-line indicator showing where it would land; the order
+      and persisted storage only update on release
+    * distinguish a drag from a click/double-click using the desktop's
+      configured drag threshold (dnd_drag_threshold), mirroring the
+      double-click-time approach already used for click detection
+    * detect the drag gesture and track it while in progress by polling the
+      live pointer/button state rather than motion-event/button-release-event,
+      after testing showed those events can be buffered/delayed while a
+      mouse button is held down in some environments
+    * an in-progress drag is force-cancelled (with nothing reordered or
+      saved) if the popup menu closes for any reason mid-drag, or the
+      extension is disabled, so no stray listener or timer is left running
