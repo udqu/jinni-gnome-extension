@@ -12,7 +12,7 @@ A quick access task manager for the GNOME Shell top bar. Click the indicator, ty
 - Optional persistence across GNOME Shell restarts
 - Configurable window width, preview size, and hover delay in Preferences
 
-![Reorder tasks in Jinni](screenshots/jinni-reorder.webm)
+![Reorder tasks in Jinni](screenshots/jinni-reorder.gif)
 
 Jinni's Preferences allow you to customize the dropdown and hover previews.
 
