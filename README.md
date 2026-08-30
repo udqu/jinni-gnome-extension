@@ -2,6 +2,8 @@
 
 A quick access task manager for the GNOME Shell top bar. Click the indicator, type a task, hit Enter — no windows to manage, no context switch.
 
+![Jinni task manager](screenshots/jinni-main.png)
+
 ## Features
 
 - Add, edit, and delete tasks from a small dropdown in the top bar
@@ -9,6 +11,12 @@ A quick access task manager for the GNOME Shell top bar. Click the indicator, ty
 - Optional hover previews for long task text
 - Optional persistence across GNOME Shell restarts
 - Configurable window width, preview size, and hover delay in Preferences
+
+![Reorder tasks in Jinni](screenshots/jinni-reorder.gif)
+
+Jinni's Preferences allow you to customize the dropdown and hover previews.
+
+![Jinni Preferences](screenshots/jinni-preferences.png)
 
 ## Requirements
 
