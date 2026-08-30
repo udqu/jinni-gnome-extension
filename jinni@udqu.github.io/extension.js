@@ -589,8 +589,14 @@ export default class JinniExtension extends Extension {
 
     _handleFocusLoss(actor, event) {
         if (event.type() === Clutter.EventType.BUTTON_PRESS) {
+            // get_source() can be null for a press that doesn't resolve to
+            // any actor (e.g. bare stage background); Clutter.Actor.contains()
+            // rejects a null argument, so treat that case as "outside" the
+            // entry being edited rather than calling it with target unchecked.
             let target = event.get_source();
-            if (target !== this._currentEntry && !this._currentEntry.contains(target)) {
+            let clickedInsideEntry = target !== null &&
+                (target === this._currentEntry || this._currentEntry.contains(target));
+            if (!clickedInsideEntry) {
                 this._saveCurrentEntry();
             }
         }
