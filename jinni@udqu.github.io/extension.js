@@ -418,10 +418,16 @@ export default class JinniExtension extends Extension {
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
         this._updateWidth();
 
-        // Clear the saved-tasks file the moment persistence is turned off,
-        // rather than on the next enable()
+        // Apply a persist-tasks toggle immediately in either direction:
+        // save the current in-memory list the moment it's turned on
+        // (otherwise nothing writes it until the next add/edit/delete,
+        // and it's lost if the session ends before that happens), or
+        // clear the file the moment it's turned off, rather than waiting
+        // on the next enable() for either.
         this._persistTasksChangedHandler = this._settings.connect('changed::persist-tasks', () => {
-            if (!this._settings.get_boolean('persist-tasks')) {
+            if (this._settings.get_boolean('persist-tasks')) {
+                this._saveTasks();
+            } else {
                 this._clearTasksFile();
             }
         });
