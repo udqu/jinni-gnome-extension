@@ -122,9 +122,9 @@ class TaskContainer {
         // extension's list-wide motion tracking rather than this task's own
         // enter/leave-event -- see updateHoverState() for why.
         this._isHovered = false;
-        // Stage-level listener used to detect a press-and-drag gesture
-        // starting on this task; see _trackDragThreshold().
-        this._dragThresholdHandlerId = null;
+        // Poll timer used to detect a press-and-drag gesture starting on
+        // this task; see _trackDragThreshold().
+        this._dragThresholdPollId = null;
 
         // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
@@ -231,42 +231,43 @@ class TaskContainer {
         this.updateHoverState(false);
     }
 
-    // Watch the stage for the press that just landed on this task turning
-    // into a drag: if the pointer moves past the desktop's configured drag
+    // Watch for the press that just landed on this task turning into a
+    // drag: if the pointer moves past the desktop's configured drag
     // threshold before the button is released, notify onClick('dragstart')
-    // so the extension can take over. Self-contained to this task -- once
-    // a drag actually starts, all further motion/release handling for it
-    // lives in the extension, not here.
+    // so the extension can take over. Polls global.get_pointer() on a timer
+    // rather than relying on motion-event/button-release-event delivery,
+    // which can be buffered/delayed while a button is held down in some
+    // environments (confirmed via testing: motion during a held-down drag
+    // arrived, if at all, only in a delayed burst after later, unrelated
+    // discrete clicks). Polling the live pointer/button state sidesteps
+    // that entirely. Self-contained to this task -- once a drag actually
+    // starts, all further handling for it lives in the extension.
     _trackDragThreshold(pressEvent) {
         let [startX, startY] = pressEvent.get_coords();
         let threshold = Clutter.Settings.get_default().dnd_drag_threshold;
-        console.log(`[jinni-drag] _trackDragThreshold: threshold=${threshold} start=(${startX},${startY})`);
-        this._dragThresholdHandlerId = global.stage.connect('captured-event', (actor, event) => {
-            let type = event.type();
-            if (type === Clutter.EventType.MOTION) {
-                let [x, y] = event.get_coords();
-                let dist = Math.hypot(x - startX, y - startY);
-                console.log(`[jinni-drag] motion during threshold-watch: dist=${dist}`);
-                if (dist >= threshold) {
-                    console.log(`[jinni-drag] threshold exceeded, calling onClick('dragstart')`);
-                    this._disconnectDragThreshold();
-                    if (this.container && this.container.get_stage()) {
-                        this._onClick('dragstart', this);
-                    } else {
-                        console.log(`[jinni-drag] container not on stage, dragstart suppressed`);
-                    }
-                }
-            } else if (type === Clutter.EventType.BUTTON_RELEASE) {
-                console.log(`[jinni-drag] release during threshold-watch, no drag started`);
-                this._disconnectDragThreshold();
+        this._dragThresholdPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+            let [x, y, mods] = global.get_pointer();
+            if (!(mods & Clutter.ModifierType.BUTTON1_MASK)) {
+                // Button released before the threshold was exceeded -- just
+                // a click, not a drag.
+                this._dragThresholdPollId = null;
+                return GLib.SOURCE_REMOVE;
             }
+            if (Math.hypot(x - startX, y - startY) >= threshold) {
+                this._dragThresholdPollId = null;
+                if (this.container && this.container.get_stage()) {
+                    this._onClick('dragstart', this);
+                }
+                return GLib.SOURCE_REMOVE;
+            }
+            return GLib.SOURCE_CONTINUE;
         });
     }
 
     _disconnectDragThreshold() {
-        if (this._dragThresholdHandlerId !== null) {
-            global.stage.disconnect(this._dragThresholdHandlerId);
-            this._dragThresholdHandlerId = null;
+        if (this._dragThresholdPollId !== null) {
+            GLib.Source.remove(this._dragThresholdPollId);
+            this._dragThresholdPollId = null;
         }
     }
 
@@ -375,6 +376,7 @@ export default class JinniExtension extends Extension {
         this._draggedTask = null;
         this._dragIndicator = null;
         this._dragMotionHandler = null;
+        this._dragPollId = null;
     }
 
     enable() {
@@ -699,7 +701,6 @@ export default class JinniExtension extends Extension {
         console.log(`[jinni-drag] _beginDrag called for "${task.getText()}"`);
         let container = task.getContainer();
         if (!container || !container.get_stage()) {
-            console.log(`[jinni-drag] _beginDrag: container missing/not on stage, aborting`);
             return;
         }
 
@@ -726,27 +727,34 @@ export default class JinniExtension extends Extension {
         container.opacity = 128;
 
         this._dragIndicator = new St.Widget({ style_class: 'task-drop-indicator', x_expand: true });
-        this._dragMotionHandler = global.stage.connect('captured-event', this._onDragEvent.bind(this));
+
+        // Escape-to-cancel is still event-driven (key events aren't part of
+        // the "continuous input while a button is held" class of events
+        // this environment buffers/delays -- see _trackDragThreshold()).
+        this._dragMotionHandler = global.stage.connect('captured-event', (actor, event) => {
+            if (event.type() === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
+                this._endDrag(false);
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        // The rest of the drag (indicator position, detecting the drop) is
+        // driven by polling the live pointer/button state rather than
+        // motion-event/button-release-event, for the same reason as
+        // TaskContainer._trackDragThreshold().
+        this._dragPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+            let [, , mods] = global.get_pointer();
+            if (!(mods & Clutter.ModifierType.BUTTON1_MASK)) {
+                this._dragPollId = null;
+                this._endDrag(true);
+                return GLib.SOURCE_REMOVE;
+            }
+            this._updateDragIndicator();
+            return GLib.SOURCE_CONTINUE;
+        });
 
         this._updateDragIndicator();
-    }
-
-    _onDragEvent(actor, event) {
-        let type = event.type();
-        console.log(`[jinni-drag] _onDragEvent: type=${type}`);
-        if (type === Clutter.EventType.MOTION) {
-            this._updateDragIndicator();
-            return Clutter.EVENT_STOP;
-        } else if (type === Clutter.EventType.BUTTON_RELEASE) {
-            console.log(`[jinni-drag] _onDragEvent: release, ending drag with commit`);
-            this._endDrag(true);
-            return Clutter.EVENT_STOP;
-        } else if (type === Clutter.EventType.KEY_PRESS && event.get_key_symbol() === Clutter.KEY_Escape) {
-            console.log(`[jinni-drag] _onDragEvent: escape, cancelling drag`);
-            this._endDrag(false);
-            return Clutter.EVENT_STOP;
-        }
-        return Clutter.EVENT_PROPAGATE;
     }
 
     // Move the drop indicator to sit at the position a drop would currently
@@ -791,6 +799,10 @@ export default class JinniExtension extends Extension {
         if (this._dragMotionHandler !== null) {
             global.stage.disconnect(this._dragMotionHandler);
             this._dragMotionHandler = null;
+        }
+        if (this._dragPollId !== null) {
+            GLib.Source.remove(this._dragPollId);
+            this._dragPollId = null;
         }
 
         let dropIndex = null;
