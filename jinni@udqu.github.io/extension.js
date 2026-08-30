@@ -118,11 +118,10 @@ class TaskContainer {
         // Task preview related members
         this._hoverTimeoutId = null;
         this._taskPreview = taskPreview;
-        // Pending idle sources for the delete button's visibility, tracked so
-        // destroy() can cancel them instead of letting a stale callback run
-        // against an actor that's already gone.
-        this._showDeleteIdleId = null;
-        this._hideDeleteIdleId = null;
+        // Pending idle source for recomputing the delete button's
+        // visibility, tracked so destroy()/resetHoverState() can cancel it
+        // instead of letting a stale callback run later.
+        this._deleteVisibilityIdleId = null;
 
         // Connect button_press_event to handle single and double clicks
         this._buttonPressEventId = this.container.connect('button_press_event', (actor, event) => {
@@ -150,18 +149,7 @@ class TaskContainer {
 
         // Connect enter-event for container to show delete button
         this._enterEventId = this.container.connect('enter-event', () => {
-            if (this.deleteButton && this.container.mapped && this._showDeleteIdleId === null) {
-                this._showDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    // Re-check on-stage-ness, not just non-null: the task may
-                    // have been pulled out of the list (e.g. to start an edit)
-                    // in the time between scheduling and this idle firing.
-                    if (this.deleteButton && this.container && this.container.get_stage()) {
-                        this.deleteButton.visible = true;
-                    }
-                    this._showDeleteIdleId = null;
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+            this._scheduleDeleteVisibilityUpdate();
             if (this._hoverTimeoutId === null) {
                 this._hoverTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._taskPreview.hoverTime, () => {
                     if (this._taskPreview && this.container && this.container.get_stage()) {
@@ -174,16 +162,8 @@ class TaskContainer {
         });
 
         // Connect leave-event for container to schedule hiding of delete button
-        this._leaveEventId = this.container.connect('leave-event', (_, event) => {
-            if (this.deleteButton && !this._isMouseWithinActor(this.deleteButton, event) && this._hideDeleteIdleId === null) {
-                this._hideDeleteIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                    if (this.deleteButton && this.container && this.container.get_stage()) {
-                        this.deleteButton.visible = false;
-                    }
-                    this._hideDeleteIdleId = null;
-                    return GLib.SOURCE_REMOVE;
-                });
-            }
+        this._leaveEventId = this.container.connect('leave-event', () => {
+            this._scheduleDeleteVisibilityUpdate();
             if (this._hoverTimeoutId !== null) {
                 GLib.Source.remove(this._hoverTimeoutId);
                 this._hoverTimeoutId = null;
@@ -205,6 +185,41 @@ class TaskContainer {
         this.container.add_child(this.deleteButton);
     }
 
+    // Schedule (at most one at a time) a recomputation of the delete
+    // button's visibility. Deliberately doesn't bake in a true/false at
+    // schedule time -- under fast successive hovers, several of these can
+    // end up queued close together, and whichever runs last should always
+    // land on the actually-correct state rather than a value decided back
+    // when a stale enter/leave event happened to fire.
+    _scheduleDeleteVisibilityUpdate() {
+        if (this._deleteVisibilityIdleId !== null) {
+            return;
+        }
+        this._deleteVisibilityIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            if (this.deleteButton && this.container && this.container.get_stage()) {
+                this.deleteButton.visible = this._isPointerWithinContainer();
+            }
+            this._deleteVisibilityIdleId = null;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // Whether the pointer is currently over this task's container, queried
+    // live rather than from a possibly-stale event. Checking against the
+    // container's own bounds (rather than e.g. just the label) means
+    // hovering the delete button itself -- a child fully inside those
+    // bounds -- still counts as "within", so the button doesn't flicker
+    // away right as it's about to be clicked.
+    _isPointerWithinContainer() {
+        if (!this.container || !this.container.get_stage()) {
+            return false;
+        }
+        let [x, y] = global.get_pointer();
+        let [x1, y1] = this.container.get_transformed_position();
+        let [width, height] = this.container.get_transformed_size();
+        return x >= x1 && x <= x1 + width && y >= y1 && y <= y1 + height;
+    }
+
     // Reset hover-related visual state and cancel any pending hover
     // timers/idle sources. Needed when the task is pulled out of the list
     // for editing: it stops receiving enter/leave events at that point, so
@@ -215,13 +230,9 @@ class TaskContainer {
             GLib.Source.remove(this._hoverTimeoutId);
             this._hoverTimeoutId = null;
         }
-        if (this._showDeleteIdleId !== null) {
-            GLib.Source.remove(this._showDeleteIdleId);
-            this._showDeleteIdleId = null;
-        }
-        if (this._hideDeleteIdleId !== null) {
-            GLib.Source.remove(this._hideDeleteIdleId);
-            this._hideDeleteIdleId = null;
+        if (this._deleteVisibilityIdleId !== null) {
+            GLib.Source.remove(this._deleteVisibilityIdleId);
+            this._deleteVisibilityIdleId = null;
         }
         if (this.deleteButton) {
             this.deleteButton.visible = false;
@@ -303,13 +314,9 @@ class TaskContainer {
             GLib.Source.remove(this._clickResetTimeoutId);
             this._clickResetTimeoutId = null;
         }
-        if (this._showDeleteIdleId !== null) {
-            GLib.Source.remove(this._showDeleteIdleId);
-            this._showDeleteIdleId = null;
-        }
-        if (this._hideDeleteIdleId !== null) {
-            GLib.Source.remove(this._hideDeleteIdleId);
-            this._hideDeleteIdleId = null;
+        if (this._deleteVisibilityIdleId !== null) {
+            GLib.Source.remove(this._deleteVisibilityIdleId);
+            this._deleteVisibilityIdleId = null;
         }
     }
 }
