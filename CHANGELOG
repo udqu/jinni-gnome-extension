@@ -107,3 +107,11 @@
       translucent white/gray line, tying it instead to the existing row
       separator color
     * trim comment density throughout extension.js (no functional changes)
+0.3.2
+    * add a GPL-2.0-or-later LICENSE, license headers on extension.js/prefs.js,
+      and a fuller README (features, install instructions, credits to the
+      original macOS Jinni app by Dino Angelov, license)
+    * fix turning persist-tasks on not saving the current in-memory task list:
+      only the "turn off" direction cleared the file instantly: turning it
+      back on did nothing until the next add/edit/delete, losing tasks added
+      while persistence was off if the session ended before that happened
