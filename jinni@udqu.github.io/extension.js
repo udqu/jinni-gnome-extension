@@ -694,6 +694,14 @@ export default class JinniExtension extends Extension {
             return;
         }
 
+        // Guard against re-entry: if a drag is somehow already in progress
+        // (e.g. a stray dragstart notification arriving twice), cleanly end
+        // it first rather than overwriting _draggedTask/_dragIndicator and
+        // leaking the previous drag's indicator actor and dimmed opacity.
+        if (this._draggedTask) {
+            this._endDrag(false);
+        }
+
         // Committing any pending edit first keeps this consistent with how
         // every other interaction here (single-click, double-click) treats
         // a task mid-edit.
