@@ -205,6 +205,32 @@ class TaskContainer {
         this.container.add_child(this.deleteButton);
     }
 
+    // Reset hover-related visual state and cancel any pending hover
+    // timers/idle sources. Needed when the task is pulled out of the list
+    // for editing: it stops receiving enter/leave events at that point, so
+    // nothing else would otherwise clear a delete-button-visible or
+    // preview-pending state left over from the hover that started the edit.
+    resetHoverState() {
+        if (this._hoverTimeoutId !== null) {
+            GLib.Source.remove(this._hoverTimeoutId);
+            this._hoverTimeoutId = null;
+        }
+        if (this._showDeleteIdleId !== null) {
+            GLib.Source.remove(this._showDeleteIdleId);
+            this._showDeleteIdleId = null;
+        }
+        if (this._hideDeleteIdleId !== null) {
+            GLib.Source.remove(this._hideDeleteIdleId);
+            this._hideDeleteIdleId = null;
+        }
+        if (this.deleteButton) {
+            this.deleteButton.visible = false;
+        }
+        if (this._taskPreview) {
+            this._taskPreview.hide();
+        }
+    }
+
     // Function to check if the mouse is within the boundaries of an actor
     _isMouseWithinActor(actor, event) {
         let [x, y] = event.get_coords();
@@ -542,6 +568,13 @@ export default class JinniExtension extends Extension {
         // Replace task with entry
         this._listBox.remove_child(task.getContainer());
         this._listBox.insert_child_at_index(entry, index);
+
+        // The task stops receiving enter/leave events while detached from
+        // the list, so explicitly clear any hover-triggered visual state
+        // (e.g. a delete button left visible from the hover that started
+        // this edit) rather than leaving it stuck until an unrelated future
+        // hover happens to reset it.
+        task.resetHoverState();
 
         // Store the current entry and corresponding label
         this._currentEntry = entry;
