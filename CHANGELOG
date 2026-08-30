@@ -50,12 +50,31 @@
       list's DOM structure in _saveTasks(); also fixes a task being silently
       dropped from persisted storage if a save happens to run while it's
       mid-edit
-    * replace the hand-rolled double-click timer with Clutter's built-in
-      click_count tracking, removing an untracked timeout that leaked past
-      task deletion
+    * fix the double-click reset timer leaking past task deletion by tracking
+      and cancelling it in destroy(); read the reset delay from the desktop's
+      configured double-click time instead of a hardcoded 500ms
     * guard the deferred idle_add callbacks in TaskContainer against a
       destroy-in-flight race, and cancel any still-pending ones in destroy()
     * create the extension's data directory before writing savedTasks.json,
       instead of silently failing to persist on a fresh profile
     * fix dead error handling around enable()'s settings fetch: getSettings()
       throws rather than returning a falsy value on failure
+0.2.3
+    * fix _deleteTask() bypassing TaskContainer's own destroy(): calling
+      getContainer().destroy() directly skipped signal disconnection and
+      pending-timeout/idle cleanup, and destroyed the delete button
+      synchronously from inside its own 'clicked' handler, surfacing as
+      "already disposed" warnings when deleting a task while another was
+      mid-edit
+    * fix a crash in _handleFocusLoss on any button-press with no resolvable
+      source actor (e.g. a click on bare stage background) while a task was
+      being edited
+    * fix the delete button staying visible on a task after editing it,
+      caused by nothing resetting its hover state when it's pulled out of
+      the list for editing
+    * rework hover tracking to be driven by motion events on the whole task
+      list instead of each row's own enter/leave-event: under fast hovering,
+      Clutter's per-row crossing detection can skip firing leave-event for a
+      row swept past quickly, permanently sticking its delete button visible
+    * clear savedTasks.json immediately when persist-tasks is turned off in
+      prefs, instead of waiting for the next enable() (next logout/login)
