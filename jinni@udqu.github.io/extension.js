@@ -275,16 +275,37 @@ class TaskContainer {
         return this.container;
     }
 
-    destroy() {
-        if (this.container) {
-            if (this._buttonPressEventId) {
-                this.container.disconnect(this._buttonPressEventId);
-            }
+    // Disconnects this task's own signal handlers and cancels its pending
+    // timers, without touching its widgets. For use when a parent cascade
+    // (e.g. the whole indicator being destroyed) is about to destroy the
+    // widgets anyway -- scheduling this task's own deferred widget
+    // destruction (see destroy() below) on top of that would race it: the
+    // parent's synchronous destroy beats the deferred one to it, and the
+    // deferred callback then tries to destroy an already-disposed actor.
+    cancelPendingWork() {
+        if (this.container && this._buttonPressEventId) {
+            this.container.disconnect(this._buttonPressEventId);
+            this._buttonPressEventId = null;
         }
+        if (this.deleteButton && this._deleteButtonClickedEventId) {
+            this.deleteButton.disconnect(this._deleteButtonClickedEventId);
+            this._deleteButtonClickedEventId = null;
+        }
+        if (this._hoverTimeoutId !== null) {
+            GLib.Source.remove(this._hoverTimeoutId);
+            this._hoverTimeoutId = null;
+        }
+        if (this._clickResetTimeoutId !== null) {
+            GLib.Source.remove(this._clickResetTimeoutId);
+            this._clickResetTimeoutId = null;
+        }
+        this._disconnectDragThreshold();
+    }
+
+    destroy() {
+        this.cancelPendingWork();
+
         if (this.deleteButton) {
-            if (this._deleteButtonClickedEventId) {
-                this.deleteButton.disconnect(this._deleteButtonClickedEventId);
-            }
             GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                 if (this.deleteButton) {
                     this.deleteButton.destroy();
@@ -311,15 +332,6 @@ class TaskContainer {
                 return GLib.SOURCE_REMOVE;
             });
         }
-        if (this._hoverTimeoutId !== null) {
-            GLib.Source.remove(this._hoverTimeoutId);
-            this._hoverTimeoutId = null;
-        }
-        if (this._clickResetTimeoutId !== null) {
-            GLib.Source.remove(this._clickResetTimeoutId);
-            this._clickResetTimeoutId = null;
-        }
-        this._disconnectDragThreshold();
     }
 }
 
@@ -449,12 +461,14 @@ export default class JinniExtension extends Extension {
         if (this._draggedTask) {
             this._endDrag(false);
         }
-        // Destroy each task's own timers/signal connections before the
-        // indicator's destroy() cascades to their underlying actors below --
-        // otherwise a pending hover/click-reset/drag-threshold source
-        // survives disable() and can later fire against an actor that's
-        // disposed but never nulled out.
-        this._tasks.forEach(task => task.destroy());
+        // Cancel each task's own timers/signal connections -- otherwise a
+        // pending hover/click-reset/drag-threshold source survives
+        // disable() and can later fire against an actor that's disposed
+        // but never nulled out. cancelPendingWork(), not destroy(): the
+        // indicator's destroy() cascades to every task's widgets right
+        // below anyway, so scheduling each task's own deferred widget
+        // destruction on top of that would race it.
+        this._tasks.forEach(task => task.cancelPendingWork());
         if (this._indicator !== null) {
             if (this._menuOpenStateHandler) {
                 this._indicator.menu.disconnect(this._menuOpenStateHandler);
