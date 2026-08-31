@@ -129,3 +129,9 @@
       the indicator's own synchronous destroy() cascade, which flooded the
       log with "already disposed" warnings once the deferred per-task widget
       destruction ran on top of an already-torn-down actor tree
+0.3.4
+    * trim comment density again (no functional changes)
+    * fix a spurious "Failed to load tasks from file" error logged on every
+      first run (or any run with no savedTasks.json yet): check for the
+      file's existence first instead of letting GLib.file_get_contents()
+      throw on a missing file and logging that as a failure
