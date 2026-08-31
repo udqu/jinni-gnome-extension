@@ -115,3 +115,17 @@
       only the "turn off" direction cleared the file instantly: turning it
       back on did nothing until the next add/edit/delete, losing tasks added
       while persistence was off if the session ended before that happened
+0.3.3
+    * checked the extension against the official EGO review guidelines
+      (gjs.guide/extensions/review-guidelines); found and fixed two real gaps:
+      disable() wasn't destroying live TaskContainer instances, so a pending
+      hover/click-reset/drag-threshold timer could survive disable() and
+      later fire against a disposed actor; and the temporary edit St.Entry
+      was only ever unparented, never destroy()'d, left to JS garbage
+      collection instead of releasing its native actor resources
+    * split TaskContainer.destroy() into cancelPendingWork() (signals/timers
+      only) plus the existing deferred widget destruction, and had disable()
+      call the former: calling full destroy() per task there raced against
+      the indicator's own synchronous destroy() cascade, which flooded the
+      log with "already disposed" warnings once the deferred per-task widget
+      destruction ran on top of an already-torn-down actor tree
