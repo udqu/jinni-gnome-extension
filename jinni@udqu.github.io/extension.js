@@ -91,9 +91,12 @@ class TaskPreview {
     destroy() {
         if (this._popup) {
             Main.layoutManager.removeChrome(this._popup);
+            if (this._popupLabel) {
+                this._popupLabel.destroy();
+                this._popupLabel = null;
+            }
             this._popup.destroy();
             this._popup = null;
-            this._popupLabel = null;
         }
     }
 }
@@ -334,13 +337,16 @@ export default class JinniExtension extends Extension {
         this._maxPreviewSizeChangedHandler = null;
         this._hoverTimeChangedHandler = null;
         this._entry = null;
+        this._entryButtonPressHandler = null;
+        this._entryActivateHandler = null;
         this._listBox = null;
-        // Destroyed (and disconnected) as part of this._indicator.destroy()
         this._listBoxMotionHandler = null;
         this._listBoxLeaveHandler = null;
+        this._indicatorButtonPressHandler = null;
         this._counter = 0;
         this._taskPreview = null;
         this._tasksFilePath = null;
+        this._loadCancellable = null;
         // Source of truth for task order/persistence, rather than
         // introspecting _listBox's DOM structure
         this._tasks = [];
@@ -349,6 +355,10 @@ export default class JinniExtension extends Extension {
         this._currentTask = null;
         this._currentIndex = null;
         this._entryFocusOutHandlerId = null;
+        // The old editing entry, unparented but not yet destroy()'d -- see
+        // _saveCurrentEntry() and disable()
+        this._entryPendingDestroy = null;
+        this._entryDestroyIdleId = null;
         // drag-and-drop reordering state
         this._menuOpenStateHandler = null;
         this._draggedTask = null;
@@ -386,8 +396,8 @@ export default class JinniExtension extends Extension {
             hint_text: "Type your task here and hit enter",
             style_class: 'counter-entry'
         });
-        this._entry.clutter_text.connect('button_press_event', this._onEntryClicked.bind(this));
-        this._entry.clutter_text.connect('activate', this._onTextEntered.bind(this));
+        this._entryButtonPressHandler = this._entry.clutter_text.connect('button_press_event', this._onEntryClicked.bind(this));
+        this._entryActivateHandler = this._entry.clutter_text.connect('activate', this._onTextEntered.bind(this));
 
         this._listBox = new St.BoxLayout({
             vertical: true,
@@ -435,12 +445,18 @@ export default class JinniExtension extends Extension {
         this._hoverTimeChangedHandler = this._settings.connect('changed::hover-time', this._updateTaskPreviewSettings.bind(this));
         this._updateTaskPreviewSettings();
 
-        this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
+        this._indicatorButtonPressHandler = this._indicator.connect('button_press_event', this._onIndicatorClicked.bind(this));
 
         this._loadTasks();
     }
 
     disable() {
+        // Cancel any in-flight async task load -- its success path touches
+        // _listBox/_tasks/_label, which are about to be nulled below.
+        if (this._loadCancellable) {
+            this._loadCancellable.cancel();
+            this._loadCancellable = null;
+        }
         // Clean up before the actors get torn down below
         if (this._draggedTask) {
             this._endDrag(false);
@@ -448,10 +464,56 @@ export default class JinniExtension extends Extension {
         // cancelPendingWork(), not destroy() -- the indicator's destroy()
         // cascade handles the widgets; destroy() here would race it.
         this._tasks.forEach(task => task.cancelPendingWork());
+
+        // A pending destroy from _saveCurrentEntry() -- cancel the idle
+        // source and destroy directly instead, in case disable() runs
+        // before it fires.
+        if (this._entryDestroyIdleId !== null) {
+            GLib.Source.remove(this._entryDestroyIdleId);
+            this._entryDestroyIdleId = null;
+        }
+        if (this._entryPendingDestroy) {
+            this._entryPendingDestroy.destroy();
+            this._entryPendingDestroy = null;
+        }
+
+        if (this._entry) {
+            if (this._entryButtonPressHandler) {
+                this._entry.clutter_text.disconnect(this._entryButtonPressHandler);
+                this._entryButtonPressHandler = null;
+            }
+            if (this._entryActivateHandler) {
+                this._entry.clutter_text.disconnect(this._entryActivateHandler);
+                this._entryActivateHandler = null;
+            }
+            this._entry.destroy();
+            this._entry = null;
+        }
+        if (this._listBox) {
+            if (this._listBoxMotionHandler) {
+                this._listBox.disconnect(this._listBoxMotionHandler);
+                this._listBoxMotionHandler = null;
+            }
+            if (this._listBoxLeaveHandler) {
+                this._listBox.disconnect(this._listBoxLeaveHandler);
+                this._listBoxLeaveHandler = null;
+            }
+            this._listBox.destroy();
+            this._listBox = null;
+        }
+        if (this._label) {
+            this._label.destroy();
+            this._label = null;
+        }
+
         if (this._indicator !== null) {
             if (this._menuOpenStateHandler) {
                 this._indicator.menu.disconnect(this._menuOpenStateHandler);
                 this._menuOpenStateHandler = null;
+            }
+            if (this._indicatorButtonPressHandler) {
+                this._indicator.disconnect(this._indicatorButtonPressHandler);
+                this._indicatorButtonPressHandler = null;
             }
             this._indicator.destroy();
             this._indicator = null;
@@ -487,11 +549,6 @@ export default class JinniExtension extends Extension {
             this._taskPreview.destroy();
             this._taskPreview = null;
         }
-        this._entry = null;
-        this._listBox = null;
-        this._listBoxMotionHandler = null;
-        this._listBoxLeaveHandler = null;
-        this._label = null;
         this._currentEntry = null;
         this._currentTask = null;
         this._currentIndex = null;
@@ -795,11 +852,15 @@ export default class JinniExtension extends Extension {
         // Unparent synchronously (list looks right immediately), but defer
         // destroy() -- this can run from the entry's own 'activate' handler,
         // and destroying it mid-signal-emission is the same hazard
-        // TaskContainer.destroy() avoids elsewhere.
-        let entryToDestroy = this._currentEntry;
-        this._listBox.remove_child(entryToDestroy);
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            entryToDestroy.destroy();
+        // TaskContainer.destroy() avoids elsewhere. Tracked on `this`
+        // (rather than a bare local) so disable() can cancel/finish it if
+        // it runs first.
+        this._entryPendingDestroy = this._currentEntry;
+        this._listBox.remove_child(this._entryPendingDestroy);
+        this._entryDestroyIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._entryPendingDestroy.destroy();
+            this._entryPendingDestroy = null;
+            this._entryDestroyIdleId = null;
             return GLib.SOURCE_REMOVE;
         });
         this._listBox.insert_child_at_index(this._currentTask.getContainer(), this._currentIndex);
@@ -816,6 +877,12 @@ export default class JinniExtension extends Extension {
         this._saveTasks();
     }
 
+    // Shared logger for the file-I/O error paths below, rather than
+    // scattering near-duplicate error-logging calls across each of them.
+    _logFileError(operation, error) {
+        console.error(`Jinni: failed to ${operation}: ${error.message}`);
+    }
+
     _saveTasks() {
         if (!this._settings.get_boolean('persist-tasks')) {
             return;
@@ -826,24 +893,34 @@ export default class JinniExtension extends Extension {
         // runs mid-edit.
         let tasks = this._tasks.map(task => task.getText()).filter(text => text !== '');
 
-        try {
-            let file = Gio.File.new_for_path(this._tasksFilePath);
+        let file = Gio.File.new_for_path(this._tasksFilePath);
 
-            let parentDir = file.get_parent();
-            if (parentDir && !parentDir.query_exists(null)) {
-                parentDir.make_directory_with_parents(null);
-            }
-
-            let [success, tag] = file.replace_contents(
-                JSON.stringify(tasks),
-                null,  // etag
-                false, // make_backup
-                Gio.FileCreateFlags.NONE,
-                null   // cancellable
-            );
-        } catch (error) {
-            console.error(`Failed to save tasks to file: ${error.message}`);
+        let parentDir = file.get_parent();
+        if (parentDir && !parentDir.query_exists(null)) {
+            parentDir.make_directory_with_parents(null);
         }
+
+        // Async, not the sync replace_contents(): shell code shouldn't
+        // block on file I/O. Unlike the sync call, the async one requires
+        // a GLib.Bytes rather than accepting a raw string. The callback
+        // doesn't touch any extension state that disable() could have
+        // nulled by the time it runs, so no cancellable is needed here
+        // (unlike _loadTasks() below).
+        let bytes = new GLib.Bytes(new TextEncoder().encode(JSON.stringify(tasks)));
+        file.replace_contents_async(
+            bytes,
+            null,  // etag
+            false, // make_backup
+            Gio.FileCreateFlags.NONE,
+            null,  // cancellable
+            (source, result) => {
+                try {
+                    source.replace_contents_finish(result);
+                } catch (error) {
+                    this._logFileError('save tasks to file', error);
+                }
+            }
+        );
     }
 
     _loadTasks() {
@@ -854,29 +931,38 @@ export default class JinniExtension extends Extension {
             return;
         }
 
-        // No saved file yet (e.g. first run) isn't an error -- check for
-        // it explicitly rather than letting GLib.file_get_contents() throw
-        // and logging that as a failure.
-        if (!Gio.File.new_for_path(this._tasksFilePath).query_exists(null)) {
+        let file = Gio.File.new_for_path(this._tasksFilePath);
+        if (!file.query_exists(null)) {
+            // Nothing saved yet (e.g. first run) -- not an error
             return;
         }
 
-        try {
-            let [success, contents] = GLib.file_get_contents(this._tasksFilePath);
-            if (success) {
-                let contentsString = new TextDecoder().decode(contents);
-                let tasks = JSON.parse(contentsString);
-                tasks.forEach(taskText => {
-                    let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
-                    this._listBox.add_child(task.getContainer());
-                    this._tasks.push(task);
-                });
-                this._counter = tasks.length;
-                this._label.set_text(`${this._counter}`);
+        // Async, not the sync GLib.file_get_contents(): shell code
+        // shouldn't block on file I/O. Cancelled in disable() since the
+        // success path below touches _listBox/_tasks/_label, which could
+        // otherwise be null by the time this fires.
+        this._loadCancellable = new Gio.Cancellable();
+        file.load_contents_async(this._loadCancellable, (source, result) => {
+            try {
+                let [success, contents] = source.load_contents_finish(result);
+                if (success && this._listBox) {
+                    let contentsString = new TextDecoder().decode(contents);
+                    let tasks = JSON.parse(contentsString);
+                    tasks.forEach(taskText => {
+                        let task = new TaskContainer(taskText, this._deleteTask.bind(this), this._onTaskClicked.bind(this), this._taskPreview);
+                        this._listBox.add_child(task.getContainer());
+                        this._tasks.push(task);
+                    });
+                    this._counter = tasks.length;
+                    this._label.set_text(`${this._counter}`);
+                }
+            } catch (error) {
+                if (!error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                    this._logFileError('load tasks from file', error);
+                }
             }
-        } catch (error) {
-            console.error(`Failed to load tasks from file: ${error.message}`);
-        }
+            this._loadCancellable = null;
+        });
     }
 
     _clearTasksFile() {
@@ -886,7 +972,7 @@ export default class JinniExtension extends Extension {
                 file.delete(null);
             }
         } catch (error) {
-            console.error(`Failed to clear tasks file: ${error.message}`);
+            this._logFileError('clear tasks file', error);
         }
     }
 }
