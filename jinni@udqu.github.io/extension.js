@@ -464,9 +464,8 @@ export default class JinniExtension extends Extension {
         // cascade handles the widgets; destroy() here would race it.
         this._tasks.forEach(task => task.cancelPendingWork());
 
-        // A pending destroy from _saveCurrentEntry() -- cancel the idle
-        // source and destroy directly instead, in case disable() runs
-        // before it fires.
+        // A pending destroy from _saveCurrentEntry() -- finish it directly
+        // in case disable() runs before its idle source fires.
         if (this._entryDestroyIdleId !== null) {
             GLib.Source.remove(this._entryDestroyIdleId);
             this._entryDestroyIdleId = null;
@@ -846,19 +845,15 @@ export default class JinniExtension extends Extension {
             this._currentTask.setText(newText);
         }
 
-        // Recompute the entry's actual current position rather than
-        // trusting an index captured back when editing started -- if any
-        // tasks were deleted earlier in the list while this one was being
-        // edited, that captured index would now be stale, and the task
-        // would land in the wrong place.
+        // Recomputed live, not trusting an index captured when editing
+        // started -- a task deleted earlier in the list meanwhile would
+        // make that stale.
         let index = this._listBox.get_children().indexOf(this._currentEntry);
 
-        // Unparent synchronously (list looks right immediately), but defer
-        // destroy() -- this can run from the entry's own 'activate' handler,
-        // and destroying it mid-signal-emission is the same hazard
-        // TaskContainer.destroy() avoids elsewhere. Tracked on `this`
-        // (rather than a bare local) so disable() can cancel/finish it if
-        // it runs first.
+        // Unparent synchronously, but defer destroy() -- this can run
+        // from the entry's own 'activate' handler, and destroying it
+        // mid-signal-emission is the same hazard TaskContainer.destroy()
+        // avoids elsewhere.
         this._entryPendingDestroy = this._currentEntry;
         this._listBox.remove_child(this._entryPendingDestroy);
         this._entryDestroyIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -903,12 +898,9 @@ export default class JinniExtension extends Extension {
             parentDir.make_directory_with_parents(null);
         }
 
-        // Async, not the sync replace_contents(): shell code shouldn't
-        // block on file I/O. Unlike the sync call, the async one requires
-        // a GLib.Bytes rather than accepting a raw string. The callback
-        // doesn't touch any extension state that disable() could have
-        // nulled by the time it runs, so no cancellable is needed here
-        // (unlike _loadTasks() below).
+        // Async (shell code shouldn't block on file I/O); needs a
+        // GLib.Bytes, unlike the sync call. No cancellable needed -- the
+        // callback doesn't touch anything disable() could have nulled.
         let bytes = new GLib.Bytes(new TextEncoder().encode(JSON.stringify(tasks)));
         file.replace_contents_async(
             bytes,
@@ -940,10 +932,8 @@ export default class JinniExtension extends Extension {
             return;
         }
 
-        // Async, not the sync GLib.file_get_contents(): shell code
-        // shouldn't block on file I/O. Cancelled in disable() since the
-        // success path below touches _listBox/_tasks/_label, which could
-        // otherwise be null by the time this fires.
+        // Async; cancelled in disable() since the success path below
+        // touches _listBox/_tasks/_label, which could be null by then.
         this._loadCancellable = new Gio.Cancellable();
         file.load_contents_async(this._loadCancellable, (source, result) => {
             try {
