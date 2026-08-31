@@ -163,11 +163,8 @@ class TaskContainer {
         this.container.add_child(this.deleteButton);
     }
 
-    // Whether the given stage-space point falls within this task's row.
-    // Used by the extension's list-wide motion tracking. Checking the
-    // container (not just the label) means hovering the delete button
-    // itself still counts as "within", so it doesn't flicker away right
-    // as it's about to be clicked.
+    // Whether (x, y) falls within this row -- used by the list-wide motion
+    // tracking. Includes the delete button, so hovering it doesn't flicker.
     isPointAt(x, y) {
         if (!this.container || !this.container.get_stage()) {
             return false;
@@ -178,11 +175,9 @@ class TaskContainer {
     }
 
     // Show/hide the delete button and start/cancel the preview timer.
-    // Driven externally by the extension's list-wide motion tracking
-    // rather than this task's own enter/leave-event, because Clutter can
-    // skip firing leave-event for a row swept past quickly during fast
-    // hovering, permanently sticking its state -- motion events over the
-    // whole list don't have that failure mode.
+    // Driven externally (list-wide motion tracking), not this task's own
+    // enter/leave-event -- Clutter can miss leave-event for a row swept
+    // past quickly, sticking its state.
     updateHoverState(isHovered) {
         if (isHovered === this._isHovered) {
             return;
@@ -212,20 +207,16 @@ class TaskContainer {
         }
     }
 
-    // Forces the delete button/preview to clear even if already "not
-    // hovered" -- needed when the task is pulled out of the list for
-    // editing, since it stops participating in hover tracking at that
-    // point and nothing else would reset it.
+    // Force-clears hover state; needed when pulled out of the list for
+    // editing, since it stops receiving hover updates at that point.
     resetHoverState() {
         this._isHovered = true;
         this.updateHoverState(false);
     }
 
-    // Detects this task's press turning into a drag: past the desktop's
-    // configured drag threshold, notify onClick('dragstart') so the
-    // extension can take over. Polls global.get_pointer() rather than
-    // motion-event/button-release-event, since testing showed those get
-    // buffered/delayed while a button is held down in this environment.
+    // Notifies onClick('dragstart') once this press moves past the drag
+    // threshold. Polls global.get_pointer() rather than motion/release
+    // events, which testing showed get delayed while a button is held down.
     _trackDragThreshold(pressEvent) {
         let [startX, startY] = pressEvent.get_coords();
         let threshold = Clutter.Settings.get_default().dnd_drag_threshold;
@@ -275,13 +266,9 @@ class TaskContainer {
         return this.container;
     }
 
-    // Disconnects this task's own signal handlers and cancels its pending
-    // timers, without touching its widgets. For use when a parent cascade
-    // (e.g. the whole indicator being destroyed) is about to destroy the
-    // widgets anyway -- scheduling this task's own deferred widget
-    // destruction (see destroy() below) on top of that would race it: the
-    // parent's synchronous destroy beats the deferred one to it, and the
-    // deferred callback then tries to destroy an already-disposed actor.
+    // Disconnects signals and cancels timers, without touching widgets --
+    // for when a parent cascade (indicator destroy) is about to destroy
+    // them anyway; destroy()'s own deferred widget destruction would race it.
     cancelPendingWork() {
         if (this.container && this._buttonPressEventId) {
             this.container.disconnect(this._buttonPressEventId);
@@ -430,12 +417,10 @@ export default class JinniExtension extends Extension {
         this._widthChangedHandler = this._settings.connect('changed::tasklist-window-width', this._updateWidth.bind(this));
         this._updateWidth();
 
-        // Apply a persist-tasks toggle immediately in either direction:
-        // save the current in-memory list the moment it's turned on
-        // (otherwise nothing writes it until the next add/edit/delete,
-        // and it's lost if the session ends before that happens), or
-        // clear the file the moment it's turned off, rather than waiting
-        // on the next enable() for either.
+        // Apply a persist-tasks toggle immediately either way: save the
+        // current list the moment it's turned on, or clear the file the
+        // moment it's turned off -- rather than waiting on the next add/
+        // edit/delete or the next enable().
         this._persistTasksChangedHandler = this._settings.connect('changed::persist-tasks', () => {
             if (this._settings.get_boolean('persist-tasks')) {
                 this._saveTasks();
@@ -456,18 +441,12 @@ export default class JinniExtension extends Extension {
     }
 
     disable() {
-        // Holds a stage-level listener and a container reference, so clean
-        // it up before those actors get torn down below
+        // Clean up before the actors get torn down below
         if (this._draggedTask) {
             this._endDrag(false);
         }
-        // Cancel each task's own timers/signal connections -- otherwise a
-        // pending hover/click-reset/drag-threshold source survives
-        // disable() and can later fire against an actor that's disposed
-        // but never nulled out. cancelPendingWork(), not destroy(): the
-        // indicator's destroy() cascades to every task's widgets right
-        // below anyway, so scheduling each task's own deferred widget
-        // destruction on top of that would race it.
+        // cancelPendingWork(), not destroy() -- the indicator's destroy()
+        // cascade handles the widgets; destroy() here would race it.
         this._tasks.forEach(task => task.cancelPendingWork());
         if (this._indicator !== null) {
             if (this._menuOpenStateHandler) {
@@ -781,9 +760,8 @@ export default class JinniExtension extends Extension {
             this._tasks.splice(index, 1);
         }
 
-        // task.destroy(), not getContainer().destroy() directly -- the
-        // latter skips signal/timer cleanup and destroys the delete button
-        // synchronously from inside its own 'clicked' handler.
+        // Not getContainer().destroy() directly -- that skips signal/timer
+        // cleanup and destroys the button mid its own 'clicked' handler.
         task.destroy();
 
         this._counter--;
@@ -814,13 +792,10 @@ export default class JinniExtension extends Extension {
             this._currentTask.setText(newText);
         }
 
-        // Remove (unparent) synchronously so the list looks right
-        // immediately, but defer the actual destroy() -- this can run from
-        // inside the entry's own 'activate' handler (pressing Enter to
-        // commit), and destroying an actor while still inside its own
-        // signal emission is the same hazard TaskContainer.destroy() works
-        // around elsewhere in this file. Unparenting alone doesn't destroy
-        // the actor, so it's safe to do synchronously here.
+        // Unparent synchronously (list looks right immediately), but defer
+        // destroy() -- this can run from the entry's own 'activate' handler,
+        // and destroying it mid-signal-emission is the same hazard
+        // TaskContainer.destroy() avoids elsewhere.
         let entryToDestroy = this._currentEntry;
         this._listBox.remove_child(entryToDestroy);
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
