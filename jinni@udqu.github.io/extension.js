@@ -449,6 +449,12 @@ export default class JinniExtension extends Extension {
         if (this._draggedTask) {
             this._endDrag(false);
         }
+        // Destroy each task's own timers/signal connections before the
+        // indicator's destroy() cascades to their underlying actors below --
+        // otherwise a pending hover/click-reset/drag-threshold source
+        // survives disable() and can later fire against an actor that's
+        // disposed but never nulled out.
+        this._tasks.forEach(task => task.destroy());
         if (this._indicator !== null) {
             if (this._menuOpenStateHandler) {
                 this._indicator.menu.disconnect(this._menuOpenStateHandler);
@@ -794,8 +800,19 @@ export default class JinniExtension extends Extension {
             this._currentTask.setText(newText);
         }
 
-        this._currentEntry.remove_style_class_name('editing-entry');
-        this._listBox.remove_child(this._currentEntry);
+        // Remove (unparent) synchronously so the list looks right
+        // immediately, but defer the actual destroy() -- this can run from
+        // inside the entry's own 'activate' handler (pressing Enter to
+        // commit), and destroying an actor while still inside its own
+        // signal emission is the same hazard TaskContainer.destroy() works
+        // around elsewhere in this file. Unparenting alone doesn't destroy
+        // the actor, so it's safe to do synchronously here.
+        let entryToDestroy = this._currentEntry;
+        this._listBox.remove_child(entryToDestroy);
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            entryToDestroy.destroy();
+            return GLib.SOURCE_REMOVE;
+        });
         this._listBox.insert_child_at_index(this._currentTask.getContainer(), this._currentIndex);
 
         if (this._entryFocusOutHandlerId) {
