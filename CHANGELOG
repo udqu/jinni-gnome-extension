@@ -154,3 +154,11 @@
         so disable() can cancel/finish it if it runs first
     * fix: the async replace_contents_async() needs a GLib.Bytes, not a raw
       string like the sync version accepted
+0.4.1
+    * fix a task landing in the wrong list position after deleting other
+      tasks earlier in the list while it was still being edited:
+      _editTask() captured the entry's position once when editing started,
+      and _listBox's children shift as earlier tasks get deleted, but that
+      captured index was never updated to match. Recompute the entry's
+      actual position at save time instead of trusting the stale one, and
+      drop the now-unnecessary _currentIndex field entirely
