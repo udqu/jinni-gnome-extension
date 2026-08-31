@@ -353,7 +353,6 @@ export default class JinniExtension extends Extension {
         // current edit variables
         this._currentEntry = null;
         this._currentTask = null;
-        this._currentIndex = null;
         this._entryFocusOutHandlerId = null;
         // The old editing entry, unparented but not yet destroy()'d -- see
         // _saveCurrentEntry() and disable()
@@ -551,7 +550,6 @@ export default class JinniExtension extends Extension {
         }
         this._currentEntry = null;
         this._currentTask = null;
-        this._currentIndex = null;
         this._tasksFilePath = null;
         this._tasks = [];
         this._counter = 0;
@@ -666,7 +664,6 @@ export default class JinniExtension extends Extension {
 
         this._currentEntry = entry;
         this._currentTask  = task;
-        this._currentIndex = index;
 
         entry.clutter_text.connect('activate', () => {
             this._saveCurrentEntry();
@@ -849,6 +846,13 @@ export default class JinniExtension extends Extension {
             this._currentTask.setText(newText);
         }
 
+        // Recompute the entry's actual current position rather than
+        // trusting an index captured back when editing started -- if any
+        // tasks were deleted earlier in the list while this one was being
+        // edited, that captured index would now be stale, and the task
+        // would land in the wrong place.
+        let index = this._listBox.get_children().indexOf(this._currentEntry);
+
         // Unparent synchronously (list looks right immediately), but defer
         // destroy() -- this can run from the entry's own 'activate' handler,
         // and destroying it mid-signal-emission is the same hazard
@@ -863,7 +867,7 @@ export default class JinniExtension extends Extension {
             this._entryDestroyIdleId = null;
             return GLib.SOURCE_REMOVE;
         });
-        this._listBox.insert_child_at_index(this._currentTask.getContainer(), this._currentIndex);
+        this._listBox.insert_child_at_index(this._currentTask.getContainer(), index);
 
         if (this._entryFocusOutHandlerId) {
             global.stage.disconnect(this._entryFocusOutHandlerId);
@@ -872,7 +876,6 @@ export default class JinniExtension extends Extension {
 
         this._currentEntry = null;
         this._currentTask  = null;
-        this._currentIndex = null;
 
         this._saveTasks();
     }
