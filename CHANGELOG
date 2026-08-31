@@ -135,3 +135,22 @@
       first run (or any run with no savedTasks.json yet): check for the
       file's existence first instead of letting GLib.file_get_contents()
       throw on a missing file and logging that as a failure
+0.4.0
+    * address all 5 warnings from extensions.gnome.org's Shexli static
+      analyzer:
+      - switched _saveTasks()/_loadTasks() from sync file I/O
+        (GLib.file_get_contents()/Gio.File.replace_contents()) to their
+        async counterparts, since shell code shouldn't block on file I/O;
+        the load path is cancelled in disable()
+      - consolidated the file-I/O error logging into one _logFileError()
+        helper, dropping the console.error call-site count under the
+        excessive-logging threshold
+      - _entry, _label, _listBox, and TaskPreview's _popupLabel are now
+        explicitly destroyed (and their signal handlers explicitly
+        disconnected) in disable(), rather than relying only on the
+        indicator's destroy() cascade
+      - the deferred idle_add in _saveCurrentEntry() that destroys the old
+        edit entry is now tracked on the instance instead of a bare local,
+        so disable() can cancel/finish it if it runs first
+    * fix: the async replace_contents_async() needs a GLib.Bytes, not a raw
+      string like the sync version accepted
