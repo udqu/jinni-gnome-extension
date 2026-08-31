@@ -901,11 +901,14 @@ export default class JinniExtension extends Extension {
         }
 
         // Async, not the sync replace_contents(): shell code shouldn't
-        // block on file I/O. The callback doesn't touch any extension
-        // state that disable() could have nulled by the time it runs, so
-        // no cancellable is needed here (unlike _loadTasks() below).
+        // block on file I/O. Unlike the sync call, the async one requires
+        // a GLib.Bytes rather than accepting a raw string. The callback
+        // doesn't touch any extension state that disable() could have
+        // nulled by the time it runs, so no cancellable is needed here
+        // (unlike _loadTasks() below).
+        let bytes = new GLib.Bytes(new TextEncoder().encode(JSON.stringify(tasks)));
         file.replace_contents_async(
-            JSON.stringify(tasks),
+            bytes,
             null,  // etag
             false, // make_backup
             Gio.FileCreateFlags.NONE,
