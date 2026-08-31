@@ -854,6 +854,13 @@ export default class JinniExtension extends Extension {
             return;
         }
 
+        // No saved file yet (e.g. first run) isn't an error -- check for
+        // it explicitly rather than letting GLib.file_get_contents() throw
+        // and logging that as a failure.
+        if (!Gio.File.new_for_path(this._tasksFilePath).query_exists(null)) {
+            return;
+        }
+
         try {
             let [success, contents] = GLib.file_get_contents(this._tasksFilePath);
             if (success) {
